@@ -19,3 +19,5 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
   does not stop the next. Local folders and USB drives (by name) for now. 23 tests.
 - 2026-10-13: `BUILD_APP.sh` (assembles and signs Data Syncer.app with icon D), `INSTALL_APP.sh`
   (checks for Swift, tests, builds, copies to /Applications), `icon/make_icns.sh`, and the docs.
+- 2026-10-13: `INSTALL_APP.sh --to DIR` puts the finished app somewhere other than /Applications
+  (e.g. the Desktop); docs on copying the app to another Mac.

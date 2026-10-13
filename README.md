@@ -33,8 +33,12 @@ destinations (4), the cloud services (5), appearance (6).
 
 ```bash
 ./INSTALL_APP.sh          # checks for Swift, runs the tests, builds Data Syncer.app, copies it to /Applications
+./INSTALL_APP.sh --to ~/Desktop   # same, but put the app on the Desktop instead
 ./BUILD_APP.sh            # just rebuild the app (after pulling new code)
 ```
+
+The finished `Data Syncer.app` can be copied to any other Mac running macOS 14 or newer and opened
+there; see [Docs/SCRIPTS.md](Docs/SCRIPTS.md) for the one-time "unidentified developer" step.
 
 **Requirements:** macOS 14 or newer and Xcode's command-line tools (`INSTALL_APP.sh` offers to
 install them).

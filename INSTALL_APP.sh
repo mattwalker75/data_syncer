@@ -10,8 +10,10 @@
 #
 #   (no options)    Check the tools, run the tests, build "Data Syncer.app" (BUILD_APP.sh) and
 #                   copy it to /Applications (asking first).
+#   -t, --to DIR    Put the finished app in DIR instead of /Applications — for example
+#                   ./INSTALL_APP.sh --to ~/Desktop   (DIR must already exist).
 #   -n, --no-copy   Build only; leave the app in build/ and don't touch /Applications.
-#   -y, --yes       Don't ask before installing tools or replacing the app in /Applications.
+#   -y, --yes       Don't ask before installing tools or replacing an app that is already there.
 #   -c, --check     Only report what is installed or missing; change nothing.
 #   -h, --help      This help.
 #
@@ -24,9 +26,10 @@ if [[ -t 1 ]]; then C_RESET=$'\033[0m'; C_RED=$'\033[0;31m'; C_GRN=$'\033[0;32m'
 info() { echo "${C_BLU}==>${C_RESET} $*"; }; ok() { echo "${C_GRN}OK ${C_RESET} $*"; }; warn() { echo "${C_YEL}!! ${C_RESET} $*"; }; err() { echo "${C_RED}ERROR${C_RESET} $*" >&2; }
 usage() { awk 'NR>=3 { if (/^#/) { sub(/^# ?/, ""); print } else { exit } }' "${BASH_SOURCE[0]}"; }
 
-COPY=1; YES=0; CHECK_ONLY=0
+COPY=1; YES=0; CHECK_ONLY=0; DEST="/Applications"
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -t|--to)      [[ $# -ge 2 ]] || { err "--to needs a folder, for example --to ~/Desktop"; exit 2; }; DEST="${2/#\~/$HOME}"; shift ;;
     -n|--no-copy) COPY=0 ;;
     -y|--yes)     YES=1 ;;
     -c|--check)   CHECK_ONLY=1 ;;
@@ -35,6 +38,8 @@ while [[ $# -gt 0 ]]; do
   esac; shift
 done
 confirm() { [[ $YES -eq 1 ]] && return 0; read -r -p "$1 [y/N] " a; [[ "$a" == y || "$a" == Y ]]; }
+if [[ $COPY -eq 1 && ! -d "$DEST" ]]; then err "The folder $DEST doesn't exist. Make it first, or pick another with --to."; exit 2; fi
+DEST="$(cd "$DEST" && pwd)"; TARGET="$DEST/Data Syncer.app"
 
 echo "Data Syncer — install"; echo
 # ---- macOS version
@@ -53,7 +58,7 @@ else
 fi
 if [[ $CHECK_ONLY -eq 1 ]]; then
   [[ -d "build/Data Syncer.app" ]] && ok "App built (build/Data Syncer.app)" || warn "App not built yet"
-  [[ -d "/Applications/Data Syncer.app" ]] && ok "App in /Applications" || warn "App not in /Applications"
+  [[ -d "$TARGET" ]] && ok "App in $DEST" || warn "App not in $DEST"
   exit 0
 fi
 # ---- tests
@@ -64,13 +69,15 @@ if swift test > build/test.log 2>&1; then ok "Tests pass ($(grep -c "passed (" b
 ./BUILD_APP.sh || { err "The build failed."; exit 1; }
 # ---- install
 if [[ $COPY -eq 1 ]]; then
-  if [[ -d "/Applications/Data Syncer.app" ]]; then
-    if confirm "Replace the Data Syncer already in /Applications?"; then rm -rf "/Applications/Data Syncer.app"; else COPY=0; fi
-  elif ! confirm "Copy Data Syncer.app to /Applications?"; then COPY=0; fi
+  if [[ -d "$TARGET" ]]; then
+    if confirm "Replace the Data Syncer already in $DEST?"; then rm -rf "$TARGET"; else COPY=0; fi
+  elif ! confirm "Copy Data Syncer.app to $DEST?"; then COPY=0; fi
 fi
 if [[ $COPY -eq 1 ]]; then
-  cp -R "build/Data Syncer.app" /Applications/ && ok "Installed /Applications/Data Syncer.app"
-  echo; echo "Next:  open \"/Applications/Data Syncer.app\"   (or find Data Syncer in Launchpad)"
+  cp -R "build/Data Syncer.app" "$DEST/" && ok "Installed $TARGET"
+  echo; echo "Next:  open \"$TARGET\""
+  [[ "$DEST" == "/Applications" ]] && echo "       (or find Data Syncer in Launchpad)"
+  echo "       To use it on another Mac, copy the whole \"Data Syncer.app\" over (AirDrop, a USB drive, a share); nothing else is needed."
 else
   echo; echo "Next:  open \"$HERE/build/Data Syncer.app\""
 fi
