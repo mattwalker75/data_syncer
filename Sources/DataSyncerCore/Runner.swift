@@ -194,13 +194,21 @@ public final class JobRunner: @unchecked Sendable {
                                                  status: .skipped("turned off for this job"), startedAt: now(), finishedAt: now()))
                 continue
             }
+            if Task.isCancelled {
+                results.append(DestinationResult(destinationId: destination.id, destinationName: destination.name,
+                                                 status: .skipped("the run was cancelled before this destination"), startedAt: now(), finishedAt: now()))
+                continue
+            }
             let r = await runOne(job, destination, choices[destination.id], source: &source, onEvent: onEvent)
             results.append(r)
             onEvent(.destinationFinished(r))
-            if Task.isCancelled { break }
         }
         return RunReport(jobId: job.id, jobName: job.name, startedAt: started, finishedAt: now(), results: results)
     }
+
+    /// The jobs that exist besides the one being run (their ids): a destination folder another of them already
+    /// uses is refused. The app sets this; tests and tools may leave it empty.
+    public var otherJobIds: @Sendable (Job) -> Set<UUID> = { _ in [] }
 
     private func runOne(_ job: Job, _ d: Destination, _ choice: BackupChoice?, source: inout Scanner.Result?,
                         onEvent: @escaping @Sendable (RunEvent) -> Void) async -> DestinationResult {
@@ -213,15 +221,21 @@ public final class JobRunner: @unchecked Sendable {
             if source == nil {
                 do { source = try Scanner.scan(job.sourceURL) } catch let e as DSError { check("Source", false, e.message); throw e }
                 check("Source", true, "\(source!.fileCount) files · \(ByteCount.string(source!.totalBytes))")
-                for (path, why) in source!.problems.prefix(20) { result.problems.append("\(path): \(why)") }
             }
             let src = source!
+            // every destination hears about what the source could not read (so nothing there is treated as deleted)
+            if !src.problems.isEmpty {
+                for (path, why) in src.problems.prefix(20) { result.problems.append("\(path): \(why) (source — not copied, and not deleted at the destination)") }
+                if src.problems.count > 20 { result.problems.append("…and \(src.problems.count - 20) more things in the source could not be read") }
+                check("Source problems", false, "\(src.problems.count) item\(src.problems.count == 1 ? "" : "s") could not be read; nothing under them is treated as deleted")
+            }
             // 2. the destination
             let storage: Storage
             do { storage = try await factory.storage(for: d); try await storage.checkReachable() }
             catch let e as DSError { check("Destination", false, e.message); throw e }
             check("Destination", true, storage.describe)
-            try await Records.ensure(on: storage, job: job, destination: d)
+            do { try await Records.ensure(on: storage, job: job, destination: d, otherJobIds: otherJobIds(job)) }
+            catch let e as DSError { check("Folder in use", false, e.message); throw e }
             try Task.checkCancellation()
             // 3. plan and copy
             switch d.mode {
@@ -252,48 +266,66 @@ public final class JobRunner: @unchecked Sendable {
         do { state = try await Records.loadSyncState(from: storage) ?? SyncState() }
         catch let e as DSError { result.problems.append(e.message); state = SyncState() }
         let there = try await storage.walk()
-        let plan = Planner.sync(source: src.snapshot, state: state, destination: there, deleteExtras: deleteExtras)
+        let plan = Planner.sync(source: src.snapshot, state: state, destination: there, deleteExtras: deleteExtras, unreadable: src.unreadable)
         onEvent(.planned(d.id, summary: plan.summary))
+        if let warning = plan.warning { onEvent(.check(d.id, name: "Looks wrong", ok: false, detail: warning)) }
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
-        if let confirmSync, !(await confirmSync(d, plan)) { throw SyncDeclined() }
+        if let confirmSync {
+            if !(await confirmSync(d, plan)) { throw SyncDeclined() }
+        } else if let warning = plan.warning {
+            throw DSError(warning + " Nothing was changed.")
+        }
         try Task.checkCancellation()
-        var progress = RunProgress(filesTotal: plan.copy.count + plan.delete.count, bytesTotal: plan.bytes)
+        var progress = RunProgress(filesTotal: plan.replace.count + plan.makeDirs.count + plan.copy.count + plan.delete.count, bytesTotal: plan.bytes)
         result.unchanged = plan.unchanged
         state.updatedAt = now()
-        defer { Task { try? await Records.saveSyncState(state, to: storage) } }
-        for dir in plan.makeDirs {
-            try Task.checkCancellation()
-            try await storage.makeDirectory(dir)
-            onEvent(.file(d.id, dir, .madeFolder))
-        }
-        for file in plan.copy {
-            try Task.checkCancellation()
-            progress.currentPath = file.path
-            onEvent(.progress(d.id, progress))
-            let action = await copyOne(file, from: job.sourceURL, to: storage, prefix: "", progress: &progress, onEvent: onEvent, d.id)
-            onEvent(.file(d.id, file.path, action))
-            switch action {
-            case .copied, .linked:
-                result.copied += 1
-                if let written = try await storage.stat(file.path) { state.files[file.path] = .init(written: written, source: file.meta) }
-            case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
-            case .failed(let why): result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
-            default: break
+        var bytes: Int64 = 0
+        do {
+            // deletions first: a rename that only changes case is then a delete and a copy, correct on every kind of disk
+            for path in plan.replace + plan.delete {
+                try Task.checkCancellation()
+                do { try await storage.remove(path); result.deleted += 1; onEvent(.file(d.id, path, .deleted)) }
+                catch let e as DSError { result.problems.append("\(path): \(e.message)"); onEvent(.file(d.id, path, .failed(e.message))) }
+                state.files.removeValue(forKey: path)
+                progress.filesDone += 1
             }
-            progress.filesDone += 1
-            if !file.meta.isSymlink { progress.bytesDone += file.meta.size }
+            for dir in plan.makeDirs {
+                try Task.checkCancellation()
+                try await storage.makeDirectory(dir)
+                onEvent(.file(d.id, dir, .madeFolder))
+                progress.filesDone += 1
+            }
+            for file in plan.copy {
+                try Task.checkCancellation()
+                progress.currentPath = file.path
+                onEvent(.progress(d.id, progress))
+                let action = try await copyOne(file, from: job.sourceURL, to: storage, prefix: "", progress: &progress, onEvent: onEvent, d.id)
+                onEvent(.file(d.id, file.path, action))
+                switch action {
+                case .copied, .linked:
+                    result.copied += 1
+                    if !file.meta.isSymlink { bytes += file.meta.size }
+                    if let written = try await storage.stat(file.path) { state.files[file.path] = .init(written: written, source: file.meta) }
+                case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
+                case .failed(let why): result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
+                default: break
+                }
+                progress.filesDone += 1
+                if !file.meta.isSymlink { progress.bytesDone += file.meta.size }
+            }
+            // folders get their dates and permissions last, after their files are in
+            for dir in plan.makeDirs.reversed() { if let m = src.snapshot[dir] { try? await storage.applyDirectoryMeta(dir, meta: m) } }
+            progress.currentPath = ""
+            onEvent(.progress(d.id, progress))
+            result.bytes = bytes
+            try await Records.saveSyncState(state, to: storage)
+        } catch {
+            // the record is saved on the way out, whatever stopped the run — outside the cancelled task
+            let final = state
+            await Task.detached { try? await Records.saveSyncState(final, to: storage) }.value
+            result.bytes = bytes
+            throw error
         }
-        for path in plan.delete {
-            try Task.checkCancellation()
-            do { try await storage.remove(path); result.deleted += 1; onEvent(.file(d.id, path, .deleted)) }
-            catch let e as DSError { result.problems.append("\(path): \(e.message)"); onEvent(.file(d.id, path, .failed(e.message))) }
-            state.files.removeValue(forKey: path)
-            progress.filesDone += 1
-        }
-        progress.currentPath = ""
-        onEvent(.progress(d.id, progress))
-        result.bytes = plan.bytes
-        try await Records.saveSyncState(state, to: storage)
     }
 
     // MARK: backups
@@ -301,7 +333,8 @@ public final class JobRunner: @unchecked Sendable {
     private func runBackup(_ job: Job, _ d: Destination, _ storage: Storage, _ src: Scanner.Result, choice: BackupChoice?,
                            chainStart: ChainStart, maxIncrementals: Int,
                            result: inout DestinationResult, onEvent: @escaping @Sendable (RunEvent) -> Void) async throws {
-        let catalog = try await BackupCatalog.load(from: storage)
+        let title = job.backupTitle(for: d)
+        let catalog = try await BackupCatalog.load(from: storage, title: title)
         var kind = choice ?? .incremental
         var parent: BackupEntry?
         if case .fullOnly = d.mode { kind = .full }
@@ -316,12 +349,11 @@ public final class JobRunner: @unchecked Sendable {
                 onEvent(.check(d.id, name: "Backup chain", ok: true, detail: "incremental \(soFar + 1) of \(maxIncrementals), measured against \(p!.folder)"))
             }
         }
-        let title = job.backupTitle(for: d)
-        var folder = BackupNaming.folderName(kind: kind, title: title, date: now())
+        let folder = BackupNaming.folderName(kind: kind, title: title, date: now())
         if try await storage.exists(folder) {
             throw DSError("A backup folder named \(folder) is already there — a backup was made this same minute. Wait a minute and run again.")
         }
-        let plan = Planner.backup(kind: kind, folderName: folder, source: src.snapshot, parent: parent?.manifest)
+        let plan = Planner.backup(kind: kind, folderName: folder, source: src.snapshot, parent: parent?.manifest, unreadable: src.unreadable)
         onEvent(.planned(d.id, summary: plan.summary))
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
         result.backupFolder = folder
@@ -334,40 +366,48 @@ public final class JobRunner: @unchecked Sendable {
                 try Task.checkCancellation()
                 try await storage.makeDirectory(joinPath(folder, dir))
             }
-            var copied: [RelPath] = []
+            var copied: [RelPath] = [], failed: [RelPath] = []
+            var bytes: Int64 = 0
             for file in plan.copy {
                 try Task.checkCancellation()
                 progress.currentPath = file.path
                 onEvent(.progress(d.id, progress))
-                let action = await copyOne(file, from: job.sourceURL, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
+                let action = try await copyOne(file, from: job.sourceURL, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
                 onEvent(.file(d.id, file.path, action))
                 switch action {
-                case .copied, .linked: result.copied += 1; copied.append(file.path)
-                case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)")
-                case .failed(let why): result.problems.append("\(file.path): \(why)")
+                case .copied, .linked: result.copied += 1; copied.append(file.path); if !file.meta.isSymlink { bytes += file.meta.size }
+                case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)"); failed.append(file.path)
+                case .failed(let why): result.problems.append("\(file.path): \(why)"); failed.append(file.path)
                 default: break
                 }
                 progress.filesDone += 1
                 if !file.meta.isSymlink { progress.bytesDone += file.meta.size }
             }
+            for dir in plan.makeDirs.reversed() { if let m = src.snapshot[dir] { try? await storage.applyDirectoryMeta(joinPath(folder, dir), meta: m) } }
             progress.currentPath = ""
             onEvent(.progress(d.id, progress))
+            // the snapshot records what this backup can vouch for: a file it could not copy is left out, so the next
+            // incremental sees it as new and copies it, and a restore does not pretend to have it
+            var snapshot = plan.snapshot
+            for path in failed { snapshot.removeValue(forKey: path) }
             let manifest = Manifest(kind: kind, createdAt: now(), jobName: job.name, title: title, basedOn: parent?.folder,
-                                    snapshot: plan.snapshot, copied: copied, deleted: plan.deleted,
-                                    fileCount: copied.count, totalBytes: plan.bytes)
+                                    snapshot: snapshot, copied: copied, failed: failed.isEmpty ? nil : failed, deleted: plan.deleted,
+                                    fileCount: copied.count, totalBytes: bytes)
             try await Records.saveManifest(manifest, of: folder, to: storage)
             result.deleted = plan.deleted.count
-            result.bytes = plan.bytes
+            result.bytes = bytes
         } catch {
-            try? await storage.remove(folder)
+            // the cleanup must not inherit the cancellation that may have stopped the run
+            await Task.detached { try? await storage.remove(folder) }.value
             throw error
         }
     }
 
     // MARK: one file
 
+    /// Copies one file; a cancellation is thrown, everything else becomes the file's action.
     private func copyOne(_ file: PlannedFile, from sourceRoot: URL, to storage: Storage, prefix: RelPath,
-                         progress: inout RunProgress, onEvent: @escaping @Sendable (RunEvent) -> Void, _ id: Destination.ID) async -> FileAction {
+                         progress: inout RunProgress, onEvent: @escaping @Sendable (RunEvent) -> Void, _ id: Destination.ID) async throws -> FileAction {
         let target = joinPath(prefix, file.path)
         if file.meta.isSymlink {
             do { try await storage.makeSymlink(target, target: file.meta.linkTarget); return .linked }
@@ -385,8 +425,9 @@ public final class JobRunner: @unchecked Sendable {
             })
             return .copied
         } catch is CancellationError {
-            return .failed("cancelled")
+            throw CancellationError()
         } catch let e as DSError {
+            if Task.isCancelled { throw CancellationError() }
             return .failed(e.message)
         } catch {
             return .failed(error.localizedDescription)

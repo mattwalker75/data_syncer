@@ -134,7 +134,8 @@ final class S3Tests: XCTestCase {
 
     func testRoundTripThroughTheEngines() async throws {
         let bucket = FakeBucket()
-        bucket.objects["work/"] = (Data(), Date())   // the folder exists (the user made it)
+        bucket.objects["work/"] = (Data(), Date())      // the folders exist (the user made them)
+        bucket.objects["backups/"] = (Data(), Date())
         FakeHTTP.install { req, body in bucket.handle(req, body) }
         let s = Scratch(); let src = s.dir("src")
         makeTree(src, ["a.txt": "A", "docs/b.txt": "B", "docs/link": "@b.txt"])
@@ -150,7 +151,7 @@ final class S3Tests: XCTestCase {
         var job = Job(name: "Cloud", sourcePath: src.path)
         job.destinations = [
             Destination(name: "s3 sync", kind: kind, folder: "work", mode: .sync(deleteExtras: true)),
-            Destination(name: "s3 backups", kind: kind, folder: "work", mode: .fullOnly, backupTitle: "T"),
+            Destination(name: "s3 backups", kind: kind, folder: "backups", mode: .fullOnly, backupTitle: "T"),
         ]
         let check = await Preflight.check(job, job.destinations[0], factory: factory)
         XCTAssertTrue(check.ok, check.items.map(\.detail).joined(separator: "; "))
@@ -164,7 +165,7 @@ final class S3Tests: XCTestCase {
         XCTAssertEqual(bucket.objects["work/big.bin"]?.0.count, S3Storage.partSize * 2 + 10)   // multipart
         XCTAssertNotNil(bucket.objects["work/docs/"])
         XCTAssertNotNil(bucket.objects["work/.datasyncer/sync-state.json"])
-        XCTAssertTrue(bucket.objects.keys.contains { $0.hasPrefix("work/2026_10_14_") && $0.hasSuffix("_Full_T/.datasyncer/manifest.json") })
+        XCTAssertTrue(bucket.objects.keys.contains { $0.hasPrefix("backups/2026_10_14_") && $0.hasSuffix("_Full_T/.datasyncer/manifest.json") })
         // a second sync: nothing to copy except the link that keeps getting skipped
         let again = await r.run(job, choices: [:]) { _ in }
         XCTAssertEqual(again.results[0].copied, 0)
@@ -175,7 +176,8 @@ final class S3Tests: XCTestCase {
         XCTAssertEqual(catalog.entries.count, 1)
         let target = s.dir("restored")
         let result = await RestoreEngine.restore(from: storage, catalog: catalog, point: catalog.entries[0].folder, to: target, removeDeleted: true) { _ in }
-        XCTAssertEqual(result.status, .finished, result.problems.joined(separator: "; "))
+        XCTAssertEqual(result.status, .finishedWithProblems)   // the link S3 could never hold is reported as missing
+        XCTAssertEqual(result.problems, ["docs/link: the backups never managed to copy this file, so it is not in the result"])
         var tree = readTree(target); tree.removeValue(forKey: "big.bin")
         XCTAssertEqual(tree, ["a.txt": "A", "docs": "<dir>", "docs/b.txt": "B"])
         XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("big.bin")).count, S3Storage.partSize * 2 + 10)

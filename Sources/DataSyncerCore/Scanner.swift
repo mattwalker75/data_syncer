@@ -10,6 +10,8 @@ public enum Scanner {
         public var totalBytes: Int64
         /// paths the scan could not read, with the reason
         public var problems: [(RelPath, String)]
+        /// the problem paths alone: nothing at or under one of these may be treated as "gone from the source"
+        public var unreadable: Set<RelPath> { Set(problems.map(\.0)) }
     }
 
     /// Scan a local folder. Throws when the folder itself cannot be read.
@@ -27,8 +29,8 @@ public enum Scanner {
         var bytes: Int64 = 0
         var problems: [(RelPath, String)] = []
         let rootPath = root.standardizedFileURL.path
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
-        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: keys,
+        // the enumerator only needs to know what to descend into; everything else comes from one lstat per entry
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey],
                                              options: [.producesRelativePathURLs],
                                              errorHandler: { url, error in
                                                  problems.append((Scanner.relative(url, rootPath: rootPath), error.localizedDescription))

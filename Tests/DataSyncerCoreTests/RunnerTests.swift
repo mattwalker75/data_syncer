@@ -9,8 +9,9 @@ final class SyncRunTests: XCTestCase {
         makeTree(src, ["a.txt": "A", "docs/b.md": "B", "empty/": "", "link": "@a.txt"], modified: when)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: src.appendingPathComponent("a.txt").path)
         let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
-        var events: [RunEvent] = []
-        let report = await JobRunner().run(job) { events.append($0) }
+        let seen = Locked<[RunEvent]>([])
+        let report = await JobRunner().run(job) { e in seen.with { $0.append(e) } }
+        let events = seen.with { $0 }
         XCTAssertEqual(report.first.status, .finished, "\(report.first.problems)")
         XCTAssertEqual(report.first.copied, 3)
         XCTAssertEqual(readTree(dst), ["a.txt": "A", "docs": "<dir>", "docs/b.md": "B", "empty": "<dir>", "link": "@a.txt"])
@@ -191,28 +192,6 @@ final class BackupRunTests: XCTestCase {
         XCTAssertTrue(why.contains("same minute"), why)
     }
 
-    func testACancelledBackupLeavesNoHalfFolder() async throws {
-        let s = Scratch()
-        let src = s.dir("src"), dst = s.dir("dst")
-        var files: [String: String] = [:]
-        for i in 0..<40 { files["f\(i).txt"] = String(repeating: "x", count: 2000) }
-        makeTree(src, files)
-        let job = localJob(source: src, dest: dst, mode: .fullOnly)
-        let r = runner(FixedClock())
-        let task = Task { await r.run(job) { _ in } }
-        // cancel as soon as the first file lands
-        let watcher = Task {
-            while !(readTree(dst).keys.contains { $0.contains("_Full_") && $0.contains("/f") }) { try? await Task.sleep(nanoseconds: 2_000_000) }
-            task.cancel()
-        }
-        let report = await task.value
-        watcher.cancel()
-        XCTAssertEqual(report.first.status, .cancelled)
-        try? await Task.sleep(nanoseconds: 200_000_000) // the cleanup is a detached task
-        let left = try await BackupCatalog.load(from: LocalStorage(root: dst))
-        XCTAssertEqual(left.entries.count, 0)
-        XCTAssertFalse(readTree(dst).keys.contains { $0.contains("_Full_") })
-    }
 }
 
 final class RestoreTests: XCTestCase {

@@ -36,6 +36,9 @@ public protocol Storage: AnyObject, Sendable {
     func makeSymlink(_ path: RelPath, target: String) async throws
     /// Modified dates this storage can keep exactly (false: cloud services that round or replace them).
     var keepsModifiedDates: Bool { get }
+    /// Give a folder its source's date and permissions (after its files are in). Storages without folder
+    /// attributes do nothing (the default).
+    func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws
     /// Every file and folder under `dir`, recursively, by relative path. The `.datasyncer` records folder at the
     /// root is left out — it is Data Syncer's, not the user's data. The default lists folder by folder; a
     /// storage that can do it in one request (SSH, cloud) overrides it.
@@ -44,12 +47,14 @@ public protocol Storage: AnyObject, Sendable {
 
 public extension Storage {
     func walk() async throws -> Snapshot { try await walk("") }
+    func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws {}
 
     func walk(_ dir: RelPath) async throws -> Snapshot {
         var out: Snapshot = [:]
         var queue: [RelPath] = [dir]
-        while let current = queue.first {
-            queue.removeFirst()
+        var next = 0
+        while next < queue.count {
+            let current = queue[next]; next += 1
             for entry in try await list(current) {
                 let path = current.isEmpty ? entry.name : current + "/" + entry.name
                 if current.isEmpty && entry.name == Records.folderName { continue }
@@ -103,18 +108,34 @@ public final class LocalStorage: Storage, @unchecked Sendable {
         LocalStorage.meta(at: url(path))
     }
 
-    /// What a local file looks like; nil when it isn't there.
+    /// What a local file looks like (without following a link); nil when it isn't there. One lstat per entry.
     public static func meta(at url: URL) -> FileMeta? {
-        let fm = FileManager.default
-        guard let attrs = try? fm.attributesOfItem(atPath: url.path) else { return nil }
-        let type = attrs[.type] as? FileAttributeType
-        let isLink = type == .typeSymbolicLink
-        let isDir = type == .typeDirectory
-        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = isDir || isLink ? 0 : (attrs[.size] as? Int64 ?? Int64((attrs[.size] as? Int) ?? 0))
-        let perms = (attrs[.posixPermissions] as? Int).map { Int16($0) }
-        let target = isLink ? ((try? fm.destinationOfSymbolicLink(atPath: url.path)) ?? "") : ""
+        var st = Darwin.stat()
+        guard lstat(url.path, &st) == 0 else { return nil }
+        let type = st.st_mode & S_IFMT
+        let isLink = type == S_IFLNK, isDir = type == S_IFDIR
+        let modified = TimeInterval(st.st_mtimespec.tv_sec) + TimeInterval(st.st_mtimespec.tv_nsec) / 1_000_000_000
+        let size: Int64 = isDir || isLink ? 0 : Int64(st.st_size)
+        let perms = Int16(st.st_mode & 0o7777)
+        let target = isLink ? ((try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) ?? "") : ""
         return FileMeta(isDirectory: isDir, isSymlink: isLink, size: size, modified: modified, linkTarget: target, permissions: perms)
+    }
+
+    /// Refuses a path that resolves (through a link) to somewhere outside the destination folder.
+    private func guardInside(_ u: URL, _ path: RelPath) throws {
+        let rootResolved = root.resolvingSymlinksInPath().path
+        // resolve the deepest existing ancestor; the leaf itself may not exist yet
+        var probe = u
+        while LocalStorage.meta(at: probe) == nil, probe.pathComponents.count > root.pathComponents.count { probe = probe.deletingLastPathComponent() }
+        let resolved = probe.resolvingSymlinksInPath().path
+        guard resolved == rootResolved || resolved.hasPrefix(rootResolved + "/") else {
+            throw DSError("\(path) leads outside the destination folder (through a link to \(resolved)), so it was left alone.")
+        }
+    }
+
+    /// Removes whatever is at a path without following links (a file, a link, or a folder with its contents).
+    private func removeLeaf(_ u: URL) throws {
+        if LocalStorage.meta(at: u) != nil { try fm.removeItem(at: u) }
     }
 
     public func list(_ dir: RelPath) async throws -> [Entry] {
@@ -129,33 +150,38 @@ public final class LocalStorage: Storage, @unchecked Sendable {
     }
 
     public func makeDirectory(_ path: RelPath) async throws {
-        do { try fm.createDirectory(at: url(path), withIntermediateDirectories: true) } catch {
+        let u = url(path)
+        try guardInside(u, path)
+        // createDirectory "succeeds" over a link to a folder; a file or link in the way must go first
+        if let m = LocalStorage.meta(at: u), !(m.isDirectory && !m.isSymlink) { try removeLeaf(u) }
+        do { try fm.createDirectory(at: u, withIntermediateDirectories: true) } catch {
             throw DSError("Could not make the folder \(path): \(error.localizedDescription)")
         }
     }
 
     public func remove(_ path: RelPath) async throws {
         guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
-        do { try fm.removeItem(at: url(path)) } catch {
+        let u = url(path)
+        try guardInside(u.deletingLastPathComponent(), path)
+        do { try removeLeaf(u) } catch {
             throw DSError("Could not remove \(path): \(error.localizedDescription)")
         }
     }
 
     public func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws {
         let dest = url(path)
+        try guardInside(dest.deletingLastPathComponent(), path)
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: dest.path) || (try? dest.checkResourceIsReachable()) == true {
-            try? fm.removeItem(at: dest) // a changed file is replaced whole; a link in the way goes too
-        }
-        try LocalStorage.copyFile(from: localURL, to: dest, progress: progress)
-        try LocalStorage.apply(meta, to: dest)
+        try LocalStorage.copyReplacing(from: localURL, to: dest, meta: meta, progress: progress)
     }
 
     public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
         try fm.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: localURL.path) { try? fm.removeItem(at: localURL) }
-        try LocalStorage.copyFile(from: url(path), to: localURL, progress: nil)
-        try LocalStorage.apply(meta, to: localURL)
+        try LocalStorage.copyReplacing(from: url(path), to: localURL, meta: meta, progress: nil)
+    }
+
+    public func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws {
+        try LocalStorage.apply(meta, to: url(path))
     }
 
     public func readData(_ path: RelPath) async throws -> Data {
@@ -180,8 +206,9 @@ public final class LocalStorage: Storage, @unchecked Sendable {
 
     public func makeSymlink(_ path: RelPath, target: String) async throws {
         let dest = url(path)
+        try guardInside(dest.deletingLastPathComponent(), path)
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: dest.path) || (try? dest.checkResourceIsReachable()) == true { try? fm.removeItem(at: dest) }
+        try removeLeaf(dest)
         do { try fm.createSymbolicLink(atPath: dest.path, withDestinationPath: target) } catch {
             throw DSError("Could not make the link \(path): \(error.localizedDescription)")
         }
@@ -189,12 +216,31 @@ public final class LocalStorage: Storage, @unchecked Sendable {
 
     // MARK: helpers
 
+    /// Copies into a temporary name beside the target and renames over it only when the copy is complete, so
+    /// the old copy survives a failure or a cancel and nothing half-written is ever left under the real name.
+    public static func copyReplacing(from src: URL, to dst: URL, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) throws {
+        let tmp = dst.deletingLastPathComponent().appendingPathComponent(".\(dst.lastPathComponent).datasyncer-part")
+        do {
+            try copyFile(from: src, to: tmp, progress: progress)
+            try apply(meta, to: tmp)
+            // a folder or link under the target name must go; a file is replaced in one step by rename(2)
+            if let m = LocalStorage.meta(at: dst), m.isDirectory || m.isSymlink { try FileManager.default.removeItem(at: dst) }
+            guard rename(tmp.path, dst.path) == 0 else {
+                throw DSError("Could not put \(dst.lastPathComponent) in place: \(String(cString: strerror(errno)))")
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tmp)
+            throw error
+        }
+    }
+
     /// A chunked copy so progress is reported while a big file copies and a cancel takes effect mid-file.
     static func copyFile(from src: URL, to dst: URL, progress: (@Sendable (Int64) -> Void)?) throws {
         guard let input = FileHandle(forReadingAtPath: src.path) else {
             throw DSError("Could not read \(src.lastPathComponent) — is it still there, and readable?")
         }
         defer { try? input.close() }
+        try? FileManager.default.removeItem(at: dst)
         guard FileManager.default.createFile(atPath: dst.path, contents: nil),
               let output = FileHandle(forWritingAtPath: dst.path) else {
             throw DSError("Could not create \(dst.lastPathComponent) at the destination.")

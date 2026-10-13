@@ -49,19 +49,37 @@ public enum Records {
         return d
     }()
 
+    /// The destination record, if the folder has one.
+    public static func loadDestinationRecord(from storage: Storage) async throws -> DestinationRecord? {
+        let path = joinPath(folderName, "destination.json")
+        guard try await storage.exists(path) else { return nil }
+        return try? decoder.decode(DestinationRecord.self, from: try await storage.readData(path))
+    }
+
     /// Make sure the README and the destination record are there. Called at the start of every run.
-    public static func ensure(on storage: Storage, job: Job, destination: Destination) async throws {
+    /// A folder already used by another destination (of this or another job) is refused: two jobs mirroring one
+    /// folder would erase each other's files. `otherJobIds` are the jobs that still exist besides this one; a
+    /// record from a job that no longer exists is simply taken over.
+    public static func ensure(on storage: Storage, job: Job, destination: Destination, otherJobIds: Set<UUID> = []) async throws {
         let readme = joinPath(folderName, "README.txt")
         if try await !storage.exists(readme) {
             try await storage.makeDirectory(folderName)
             try await storage.writeData(Data(readmeText.utf8), to: readme)
         }
+        let path = joinPath(folderName, "destination.json")
+        if let existing = try await loadDestinationRecord(from: storage) {
+            if existing.destinationId == destination.id { return }
+            if existing.jobId == job.id {
+                throw DSError("This folder is already used by another destination of this job (“\(existing.destinationName)”). Two destinations can't share one folder — give this one a folder of its own.")
+            }
+            if otherJobIds.contains(existing.jobId) {
+                throw DSError("This folder is already used by the job “\(existing.jobName)” (destination “\(existing.destinationName)”). Two jobs can't share one folder — a sync would erase the other job's files. Give this destination a folder of its own.")
+            }
+            // the job that used it is gone: take the folder over
+        }
         let record = DestinationRecord(jobId: job.id, jobName: job.name, destinationId: destination.id,
                                        destinationName: destination.name, mode: destination.mode.label, since: Date())
-        let path = joinPath(folderName, "destination.json")
-        if try await !storage.exists(path) {
-            try await storage.writeData(try encoder.encode(record), to: path)
-        }
+        try await storage.writeData(try encoder.encode(record), to: path)
     }
 
     public static func loadSyncState(from storage: Storage) async throws -> SyncState? {
@@ -126,6 +144,8 @@ public struct Manifest: Codable, Equatable, Sendable {
     public var snapshot: Snapshot
     /// what this backup's folder actually contains (a full: everything; an incremental: only what changed)
     public var copied: [RelPath]
+    /// files the backup could not copy (unreadable, locked); the next incremental copies them, a restore lacks them
+    public var failed: [RelPath]?
     /// gone from the source since `basedOn` (empty for a full)
     public var deleted: [RelPath]
     public var fileCount: Int
@@ -191,12 +211,15 @@ public struct BackupEntry: Equatable, Sendable {
 
 public struct BackupCatalog: Sendable {
     public var entries: [BackupEntry]
+    private var index: [String: BackupEntry]
 
-    /// Every backup-named folder at the root of the storage, newest first.
-    public static func load(from storage: Storage) async throws -> BackupCatalog {
+    /// Every backup-named folder at the root of the storage, newest first. With `title`, only the backups of
+    /// that title: another job's backups in the same folder are never part of this one's chains.
+    public static func load(from storage: Storage, title: String? = nil) async throws -> BackupCatalog {
         var entries: [BackupEntry] = []
         for entry in try await storage.list("") where entry.meta.isDirectory {
             guard let parsed = BackupNaming.parse(entry.name) else { continue }
+            if let title, parsed.title != title { continue }
             let manifest = try? await Records.loadManifest(of: entry.name, from: storage)
             entries.append(BackupEntry(parsed: parsed, manifest: manifest))
         }
@@ -204,9 +227,12 @@ public struct BackupCatalog: Sendable {
         return BackupCatalog(entries: entries)
     }
 
-    public init(entries: [BackupEntry]) { self.entries = entries }
+    public init(entries: [BackupEntry]) {
+        self.entries = entries
+        index = Dictionary(entries.map { ($0.folder, $0) }, uniquingKeysWith: { a, _ in a })
+    }
 
-    public func entry(_ folder: String) -> BackupEntry? { entries.first { $0.folder == folder } }
+    public func entry(_ folder: String) -> BackupEntry? { index[folder] }
 
     /// The newest full backup with a readable record.
     public var newestFull: BackupEntry? { entries.first { $0.parsed.kind == .full && $0.manifest != nil } }

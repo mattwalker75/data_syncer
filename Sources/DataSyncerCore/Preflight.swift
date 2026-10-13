@@ -34,7 +34,7 @@ public enum Preflight {
     }
 
     /// One destination: reachable, the folder there and writable, free space, and what backups it already holds.
-    public static func check(_ job: Job, _ d: Destination, factory: StorageFactory = DefaultStorageFactory()) async -> DestinationCheck {
+    public static func check(_ job: Job, _ d: Destination, factory: StorageFactory = DefaultStorageFactory(), otherJobIds: Set<UUID> = []) async -> DestinationCheck {
         var out = DestinationCheck(destinationId: d.id, items: [])
         let storage: Storage
         do {
@@ -48,12 +48,14 @@ public enum Preflight {
             out.items.append(CheckItem(name: "Reachable", ok: false, detail: error.localizedDescription))
             return out
         }
-        // writable: a small file in the records folder, removed again
+        // writable: a small file in the records folder, removed again (and the folder too, if the check made it)
         do {
             let probe = joinPath(Records.folderName, ".write-check")
+            let hadRecords = try await storage.exists(Records.folderName)
             try await storage.makeDirectory(Records.folderName)
             try await storage.writeData(Data("ok".utf8), to: probe)
             try await storage.remove(probe)
+            if !hadRecords { try? await storage.remove(Records.folderName) }
             out.items.append(CheckItem(name: "Writable", ok: true, detail: "Data Syncer can write here"))
         } catch let e as DSError {
             out.items.append(CheckItem(name: "Writable", ok: false, detail: e.message))
@@ -63,15 +65,27 @@ public enum Preflight {
         if let free = try? await storage.freeSpace() {
             out.items.append(CheckItem(name: "Free space", ok: true, detail: ByteCount.string(free)))
         }
+        if let record = try? await Records.loadDestinationRecord(from: storage), record.destinationId != d.id {
+            let other = otherJobIds.contains(record.jobId) || record.jobId == job.id
+            out.items.append(CheckItem(name: "Folder in use", ok: !other,
+                                       detail: other ? "already used by the job “\(record.jobName)” (destination “\(record.destinationName)”) — two jobs can't share one folder"
+                                                     : "was used by a job that no longer exists (“\(record.jobName)”); it will be taken over"))
+        }
         switch d.mode {
         case .sync:
-            if let state = try? await Records.loadSyncState(from: storage) {
-                out.items.append(CheckItem(name: "Last sync", ok: true, detail: "\(state.files.count) files recorded, \(Self.when(state.updatedAt))"))
-            } else {
-                out.items.append(CheckItem(name: "Last sync", ok: true, detail: "never synced here yet — the first run copies everything"))
+            do {
+                if let state = try await Records.loadSyncState(from: storage) {
+                    out.items.append(CheckItem(name: "Last sync", ok: true, detail: "\(state.files.count) files recorded, \(Self.when(state.updatedAt))"))
+                } else {
+                    out.items.append(CheckItem(name: "Last sync", ok: true, detail: "never synced here yet — the first run copies everything"))
+                }
+            } catch let e as DSError {
+                out.items.append(CheckItem(name: "Last sync", ok: false, detail: e.message))
+            } catch {
+                out.items.append(CheckItem(name: "Last sync", ok: false, detail: error.localizedDescription))
             }
         case .fullOnly, .fullIncremental:
-            if let catalog = try? await BackupCatalog.load(from: storage) {
+            if let catalog = try? await BackupCatalog.load(from: storage, title: job.backupTitle(for: d)) {
                 let fulls = catalog.entries.filter { $0.parsed.kind == .full }.count
                 let incs = catalog.entries.filter { $0.parsed.kind == .incremental }.count
                 let unreadable = catalog.entries.filter { $0.manifest == nil }.count
