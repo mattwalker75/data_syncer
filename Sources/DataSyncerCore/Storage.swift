@@ -43,11 +43,14 @@ public protocol Storage: AnyObject, Sendable {
     /// root is left out — it is Data Syncer's, not the user's data. The default lists folder by folder; a
     /// storage that can do it in one request (SSH, cloud) overrides it.
     func walk(_ dir: RelPath) async throws -> Snapshot
+    /// Called when a run or restore is done with the storage (SSH closes its shared connection). Default: nothing.
+    func close() async
 }
 
 public extension Storage {
     func walk() async throws -> Snapshot { try await walk("") }
     func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws {}
+    func close() async {}
 
     func walk(_ dir: RelPath) async throws -> Snapshot {
         var out: Snapshot = [:]

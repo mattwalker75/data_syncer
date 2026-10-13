@@ -38,10 +38,17 @@ public enum SSHInfo {
 
     public static func overview() async -> SSHOverview {
         let dir = sshDir
-        let agent: [String]?
-        if let r = try? await Shell.run("/usr/bin/ssh-add", ["-l"]) {
-            agent = r.ok ? r.text.split(separator: "\n").map(String.init) : (r.stderr.lowercased().contains("no identities") || r.text.lowercased().contains("no identities") ? [] : nil)
-        } else { agent = nil }
+        // a wedged agent must not hang the window: three seconds, then "no agent reachable"
+        let agent: [String]? = await withTaskGroup(of: [String]??.self) { group in
+            group.addTask {
+                guard let r = try? await Shell.run("/usr/bin/ssh-add", ["-l"]) else { return .some(nil) }
+                return .some(r.ok ? r.text.split(separator: "\n").map(String.init) : (r.stderr.lowercased().contains("no identities") || r.text.lowercased().contains("no identities") ? [] : nil))
+            }
+            group.addTask { try? await Task.sleep(nanoseconds: 3_000_000_000); return .some(nil) }
+            let first = await group.next() ?? .some(nil)
+            group.cancelAll()
+            return first ?? nil
+        }
         return SSHOverview(sshDir: dir.path, keys: keys(in: dir), configHosts: configHosts(at: dir.appendingPathComponent("config")),
                            knownHostsCount: knownHostsCount(at: dir.appendingPathComponent("known_hosts")), agentKeys: agent)
     }
@@ -52,7 +59,10 @@ public enum SSHInfo {
         var out: [SSHKey] = []
         for name in names.sorted() where !name.hasSuffix(".pub") && !["config", "known_hosts", "known_hosts.old", "authorized_keys", "agent", "environment", "rc"].contains(name) {
             let url = dir.appendingPathComponent(name)
-            guard let h = FileHandle(forReadingAtPath: url.path), let head = try? h.read(upToCount: 40), String(decoding: head, as: UTF8.self).hasPrefix("-----BEGIN") else { continue }
+            guard let h = FileHandle(forReadingAtPath: url.path) else { continue }
+            let head = try? h.read(upToCount: 40)
+            try? h.close()
+            guard let head, String(decoding: head, as: UTF8.self).hasPrefix("-----BEGIN") else { continue }
             let pub = url.appendingPathExtension("pub")
             var type = "", comment = ""
             if let line = try? String(contentsOf: pub, encoding: .utf8).split(separator: "\n").first {
@@ -77,7 +87,9 @@ public enum SSHInfo {
         for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("#") { continue }
-            let parts = line.replacingOccurrences(of: "=", with: " ").split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map { $0.trimmingCharacters(in: .whitespaces) }
+            // "Key value", "Key=value" or "Key\tvalue"
+            var parts = line.split(maxSplits: 1, omittingEmptySubsequences: true) { $0 == " " || $0 == "\t" || $0 == "=" }.map { $0.trimmingCharacters(in: .whitespaces) }
+            if parts.count == 2, parts[1].hasPrefix("=") { parts[1] = String(parts[1].dropFirst()).trimmingCharacters(in: .whitespaces) }
             guard parts.count == 2 else { continue }
             let key = parts[0].lowercased(), value = parts[1]
             switch key {

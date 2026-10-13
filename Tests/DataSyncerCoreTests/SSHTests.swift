@@ -53,10 +53,14 @@ final class SSHParsingTests: XCTestCase {
           ServerAliveInterval 30
         Host work
             HostName=work.example.com
+        Host\ttabbed
+        \tHostName\tt.example.com
+        \tUser = a=b
         """)
-        XCTAssertEqual(hosts.count, 2)
+        XCTAssertEqual(hosts.count, 3)
         XCTAssertEqual(hosts[0], SSHConfigHost(alias: "nas", hostName: "nas.local", user: "matt", port: 2222, identityFile: "~/.ssh/id_nas"))
         XCTAssertEqual(hosts[1], SSHConfigHost(alias: "work", hostName: "work.example.com"))
+        XCTAssertEqual(hosts[2], SSHConfigHost(alias: "tabbed", hostName: "t.example.com", user: "a=b"))
     }
 
     func testKeyDiscovery() throws {
@@ -76,13 +80,17 @@ final class SSHParsingTests: XCTestCase {
 
     func testShareMatching() {
         let url = URL(string: "smb://nas/backups")!
-        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//matt@nas._smb._tcp.local/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", url: url))
-        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//GUEST:@NAS.local:445/Backups", mountedOn: "/Volumes/Backups", fsType: "smbfs", url: url))
-        XCTAssertFalse(NetworkShare.matches(mountedFrom: "//matt@nas/photos", mountedOn: "/Volumes/photos", fsType: "smbfs", url: url))
-        XCTAssertFalse(NetworkShare.matches(mountedFrom: "//matt@other/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", url: url))
-        XCTAssertFalse(NetworkShare.matches(mountedFrom: "/dev/disk3s1", mountedOn: "/Volumes/backups", fsType: "apfs", url: url))
-        XCTAssertTrue(NetworkShare.matches(mountedFrom: "afp_0TQ3x", mountedOn: "/Volumes/backups", fsType: "afpfs", url: url))
-        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//m@nas/My%20Share", mountedOn: "/Volumes/My Share", fsType: "smbfs", url: URL(string: "smb://nas/My%20Share")!))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//matt@nas._smb._tcp.local/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: url))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//GUEST:@NAS.local:445/Backups", mountedOn: "/Volumes/Backups", fsType: "smbfs", remount: nil, url: url))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//m@[fe80::1]:445/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: URL(string: "smb://[fe80::1]/backups")!))
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "//matt@nas/photos", mountedOn: "/Volumes/photos", fsType: "smbfs", remount: nil, url: url))
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "//matt@other/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: url))
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "/dev/disk3s1", mountedOn: "/Volumes/backups", fsType: "apfs", remount: nil, url: url))
+        // AFP hides the server in f_mntfromname: without the remount URL it is NOT a match (another machine's "backups" must never be used)
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "afp_0TQ3x", mountedOn: "/Volumes/backups", fsType: "afpfs", remount: nil, url: url))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "afp_0TQ3x", mountedOn: "/Volumes/backups", fsType: "afpfs", remount: URL(string: "afp://nas.local/backups"), url: url))
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "afp_0TQ3x", mountedOn: "/Volumes/backups", fsType: "afpfs", remount: URL(string: "afp://laptop/backups"), url: url))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//m@nas/My%20Share", mountedOn: "/Volumes/My Share", fsType: "smbfs", remount: nil, url: URL(string: "smb://nas/My%20Share")!))
     }
 
     func testSecretsRoundTripInMemory() throws {
@@ -265,6 +273,76 @@ final class SSHRoundTripTests: XCTestCase {
         let check = await Preflight.check(job, job.destinations[1], factory: Factory(knownHosts: server.knownHosts))
         XCTAssertTrue(check.ok, check.items.map(\.detail).joined(separator: "; "))
         XCTAssertTrue(check.items.contains { $0.name == "Backups here" && $0.detail.contains("1 full, 1 incremental") })
+    }
+
+    // a remote write that fails at once must not kill the app (SIGPIPE) — a plain error instead
+    func testFailedRemoteWriteIsAnErrorNotACrash() async throws {
+        let st = SSHStorage(options: server.options, root: scratch.root.path)
+        let big = scratch.dir("big").appendingPathComponent("big.bin")
+        try Data(repeating: 9, count: 3 * 1024 * 1024).write(to: big)
+        do { try await st.upload(localURL: big, to: "no-such-folder/deeper/big.bin", meta: LocalStorage.meta(at: big)!, progress: nil); XCTFail("should fail") }
+        catch let e as DSError { XCTAssertTrue(e.message.contains("could not be written"), e.message) }
+        let r = try await st.client.run("cat > /no/such/place", stdin: Data(repeating: 1, count: 2 * 1024 * 1024))
+        XCTAssertFalse(r.ok)
+    }
+
+    // the destination root may itself be a link (NAS shared folders often are); a trailing slash or ~/ is fine
+    func testLinkedRootAndOddRootSpellings() async throws {
+        let real = scratch.dir("real-root")
+        makeTree(real, ["a.txt": "A", "sub/b.txt": "B"])
+        let link = scratch.root.appendingPathComponent("linked-root")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        let viaLink = SSHStorage(options: server.options, root: link.path)
+        try await viaLink.checkReachable()
+        let walked = try await viaLink.walk()
+        XCTAssertEqual(Set(walked.keys), ["a.txt", "sub", "sub/b.txt"])
+        let listed = try await viaLink.list("")
+        XCTAssertEqual(Set(listed.map(\.name)), ["a.txt", "sub"])
+        let slash = SSHStorage(options: server.options, root: real.path + "/")
+        let walked2 = try await slash.walk()
+        XCTAssertEqual(Set(walked2.keys), ["a.txt", "sub", "sub/b.txt"])
+        XCTAssertEqual(SSHStorage.normalise("~/backups/"), "backups")
+        XCTAssertEqual(SSHStorage.normalise("-odd"), "./-odd")
+        XCTAssertEqual(SSHStorage.normalise("/"), "/")
+        // a listing that hit one unreadable entry still returns the rest
+        let dir = scratch.dir("partial")
+        makeTree(dir, ["ok.txt": "O", "locked/x.txt": "X"])
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: dir.appendingPathComponent("locked").path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.appendingPathComponent("locked").path) }
+        let partial = try await SSHStorage(options: server.options, root: dir.path).walk()
+        XCTAssertEqual(Set(partial.keys), ["ok.txt", "locked"])
+    }
+
+    // names that would break a careless command line, through the real ssh
+    func testAwkwardNames() async throws {
+        let remote = scratch.dir("awkward")
+        let st = SSHStorage(options: server.options, root: remote.path)
+        let names = ["it's here.txt", "dollar $HOME.txt", "back`tick`.txt", "semi;colon.txt", "-leading-dash.txt", "spaces  double.txt", "quote\"d.txt", "ümlaut 日本.txt", "bang!.txt"]
+        let local = scratch.dir("local-awkward")
+        for n in names { try Data(n.utf8).write(to: local.appendingPathComponent(n)) }
+        for n in names { try await st.upload(localURL: local.appendingPathComponent(n), to: n, meta: LocalStorage.meta(at: local.appendingPathComponent(n))!, progress: nil) }
+        let walked = try await st.walk()
+        XCTAssertEqual(Set(walked.keys), Set(names))
+        for n in names { let d = try await st.readData(n); XCTAssertEqual(String(decoding: d, as: UTF8.self), n) }
+        try await st.makeSymlink("-link", target: "-leading-dash.txt")
+        let m = try await st.stat("-link"); XCTAssertEqual(m?.linkTarget, "-leading-dash.txt")
+        try await st.remove("-leading-dash.txt")
+        XCTAssertNil(readTree(remote)["-leading-dash.txt"])
+        XCTAssertFalse(readTree(remote).keys.contains { $0.contains("datasyncer-part") })
+    }
+
+    // a key with a passphrase goes through the askpass path
+    func testPassphraseKeyThroughAskpass() async throws {
+        let keyPath = scratch.dir("pp").appendingPathComponent("key")
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh-keygen"); p.arguments = ["-q", "-t", "ed25519", "-N", "open sesame", "-f", keyPath.path]; try p.run(); p.waitUntilExit()
+        try (try String(contentsOf: keyPath.appendingPathExtension("pub"))).write(to: server.dir.appendingPathComponent("authorized_keys"), atomically: true, encoding: .utf8)
+        var o = server.options; o.keyPath = keyPath.path; o.secret = "open sesame"
+        let st = SSHStorage(options: o, root: scratch.root.path)
+        try await st.checkReachable()
+        await st.close()
+        o.secret = "wrong"
+        let bad = SSHStorage(options: o, root: scratch.root.path)
+        do { try await bad.checkReachable(); XCTFail("should fail") } catch let e as DSError { XCTAssertTrue(e.message.contains("passphrase") || e.message.contains("refused"), e.message) }
     }
 
     func testWrongKeyGivesAPlainMessage() async throws {

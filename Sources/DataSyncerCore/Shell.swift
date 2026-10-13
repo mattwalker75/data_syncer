@@ -11,6 +11,11 @@ public struct ShellResult: Sendable {
 }
 
 public enum Shell {
+    /// A write into a pipe whose reader has gone must come back as an error, never as SIGPIPE killing the app.
+    static func noSigpipe(_ pipe: Pipe) {
+        _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+    }
+
     /// Runs `executable` with `arguments`, optionally feeding `stdin`, and returns everything it printed.
     public static func run(_ executable: String, _ arguments: [String], environment: [String: String]? = nil,
                            stdin: Data? = nil) async throws -> ShellResult {
@@ -19,24 +24,32 @@ public enum Shell {
         p.arguments = arguments
         if let environment { p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
         let out = Pipe(), err = Pipe(), inp = Pipe()
+        noSigpipe(inp)
         p.standardOutput = out; p.standardError = err; p.standardInput = inp
+        let cancelled = Locked(false)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ShellResult, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
+                    if cancelled.value || Task.isCancelled { cont.resume(throwing: CancellationError()); return }
                     do { try p.run() } catch { cont.resume(throwing: DSError("Could not start \(executable): \(error.localizedDescription)")); return }
                     // readers on their own threads: a full pipe would otherwise block the child
                     let group = DispatchGroup()
                     var outData = Data(), errData = Data()
                     group.enter(); DispatchQueue.global().async { outData = out.fileHandleForReading.readDataToEndOfFile(); group.leave() }
                     group.enter(); DispatchQueue.global().async { errData = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-                    if let stdin { try? inp.fileHandleForWriting.write(contentsOf: stdin) }
+                    var writeFailed = false
+                    if let stdin { do { try inp.fileHandleForWriting.write(contentsOf: stdin) } catch { writeFailed = true } }
                     try? inp.fileHandleForWriting.close()
                     p.waitUntilExit()
                     group.wait()
-                    cont.resume(returning: ShellResult(status: p.terminationStatus, stdout: outData, stderr: String(decoding: errData, as: UTF8.self)))
+                    if cancelled.value { cont.resume(throwing: CancellationError()); return }
+                    var result = ShellResult(status: p.terminationStatus, stdout: outData, stderr: String(decoding: errData, as: UTF8.self))
+                    if writeFailed && result.status == 0 { result.status = 1; result.stderr += "\nthe command stopped reading before everything was sent" }
+                    cont.resume(returning: result)
                 }
             }
         } onCancel: {
+            cancelled.value = true
             if p.isRunning { p.terminate() }
         }
     }
@@ -49,11 +62,13 @@ public enum Shell {
         p.arguments = arguments
         if let environment { p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 } }
         let out = Pipe(), err = Pipe(), inp = Pipe()
+        noSigpipe(inp)
         p.standardOutput = out; p.standardError = err; p.standardInput = inp
         let cancelled = Locked(false)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ShellResult, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
+                    if cancelled.value || Task.isCancelled { cont.resume(throwing: CancellationError()); return }
                     let input: FileHandle
                     do { input = try FileHandle(forReadingFrom: file) } catch { cont.resume(throwing: DSError("\(file.lastPathComponent) could not be read: \(error.localizedDescription)")); return }
                     defer { try? input.close() }
@@ -99,6 +114,7 @@ public enum Shell {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ShellResult, Error>) in
                 DispatchQueue.global(qos: .userInitiated).async {
+                    if cancelled.value || Task.isCancelled { cont.resume(throwing: CancellationError()); return }
                     FileManager.default.createFile(atPath: file.path, contents: nil)
                     let output: FileHandle
                     do { output = try FileHandle(forWritingTo: file) } catch { cont.resume(throwing: DSError("\(file.path) could not be written: \(error.localizedDescription)")); return }

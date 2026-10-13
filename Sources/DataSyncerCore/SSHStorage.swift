@@ -35,6 +35,17 @@ public final class SSHClient: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
 
+    /// The control folder must be ours alone: not a link, owned by us, mode 0700 — another account must never be
+    /// able to plant an askpass script that would see the password.
+    func checkControlDir() throws {
+        var st = Darwin.stat()
+        guard lstat(controlDir.path, &st) == 0 else { throw DSError("The SSH working folder \(controlDir.path) could not be made.") }
+        let isDir = (st.st_mode & S_IFMT) == S_IFDIR
+        guard isDir, st.st_uid == getuid(), (st.st_mode & 0o777) == 0o700 else {
+            throw DSError("The SSH working folder \(controlDir.path) belongs to someone else or has the wrong permissions. Remove it and try again.")
+        }
+    }
+
     public var baseArguments: [String] {
         var a = ["-p", String(options.port),
                  "-o", "ControlMaster=auto", "-o", "ControlPath=\(controlDir.path)/%C", "-o", "ControlPersist=120",
@@ -47,35 +58,41 @@ public final class SSHClient: @unchecked Sendable {
     }
 
     /// With a password or passphrase, ssh asks an "askpass" program for it; ours prints it from the environment.
+    /// The script is written afresh every time (never trusting one found there).
     public var environment: [String: String] {
         guard let secret = options.secret else { return [:] }
         let script = controlDir.appendingPathComponent("askpass.sh")
-        if !FileManager.default.fileExists(atPath: script.path) {
-            try? Data("#!/bin/sh\nprintf '%s\\n' \"$DATASYNCER_SSH_SECRET\"\n".utf8).write(to: script)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-        }
+        try? FileManager.default.removeItem(at: script)
+        try? Data("#!/bin/sh\nprintf '%s\\n' \"$DATASYNCER_SSH_SECRET\"\n".utf8).write(to: script)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         return ["SSH_ASKPASS": script.path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0", "DATASYNCER_SSH_SECRET": secret]
     }
+
+    /// Every remote command runs under `sh`, whatever the user's login shell is (csh, fish…).
+    static func wrapped(_ command: String) -> String { "sh -c " + Shell.quote(command) }
 
     private var target: String { "\(options.user)@\(options.host)" }
 
     /// Runs a shell command on the server.
     public func run(_ command: String, stdin: Data? = nil) async throws -> ShellResult {
-        let r = try await Shell.run("/usr/bin/ssh", baseArguments + [target, command], environment: environment, stdin: stdin)
+        try checkControlDir()
+        let r = try await Shell.run("/usr/bin/ssh", baseArguments + [target, SSHClient.wrapped(command)], environment: environment, stdin: stdin)
         if r.status == 255 { throw SSHClient.explain(r.stderr, options) }
         return r
     }
 
     /// Runs a command on the server with a local file on its stdin.
     public func feed(_ command: String, file: URL, progress: (@Sendable (Int64) -> Void)?) async throws -> ShellResult {
-        let r = try await Shell.feed("/usr/bin/ssh", baseArguments + [target, command], environment: environment, file: file, progress: progress)
+        try checkControlDir()
+        let r = try await Shell.feed("/usr/bin/ssh", baseArguments + [target, SSHClient.wrapped(command)], environment: environment, file: file, progress: progress)
         if r.status == 255 { throw SSHClient.explain(r.stderr, options) }
         return r
     }
 
     /// Runs a command on the server and saves its output to a local file.
     public func drain(_ command: String, to file: URL) async throws -> ShellResult {
-        let r = try await Shell.drain("/usr/bin/ssh", baseArguments + [target, command], environment: environment, to: file)
+        try checkControlDir()
+        let r = try await Shell.drain("/usr/bin/ssh", baseArguments + [target, SSHClient.wrapped(command)], environment: environment, to: file)
         if r.status == 255 { throw SSHClient.explain(r.stderr, options) }
         return r
     }
@@ -117,6 +134,10 @@ public final class SSHClient: @unchecked Sendable {
         }
         if s.contains("host key verification failed") { return DSError("The identity of \(o.host) could not be verified (~/.ssh/known_hosts). Connect to it once in Terminal to accept it, then try again.") }
         if s.contains("incorrect passphrase") || s.contains("bad passphrase") { return DSError("The passphrase for the key \(o.keyPath ?? "") is wrong.") }
+        if s.contains("too many authentication failures") { return DSError("\(o.host) gave up after too many keys were offered (ssh-agent holds several). Choose the key file for this destination so only that one is tried.") }
+        if s.contains("kex_exchange_identification") || s.contains("connection closed by remote host") || s.contains("connection reset") {
+            return DSError("\(o.host) closed the connection as soon as it opened — often rate limiting after failed sign-ins, or a firewall. Wait a minute and try again.")
+        }
         if s.contains("control socket") || s.contains("mux") { return DSError("The SSH connection to \(who) broke: \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
         let line = stderr.split(separator: "\n").last.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? "no details"
         return DSError("SSH to \(who) failed: \(line)")
@@ -134,9 +155,22 @@ public final class SSHStorage: Storage, @unchecked Sendable {
 
     public init(options: SSHOptions, root: String) {
         client = SSHClient(options)
-        self.root = root.isEmpty ? "." : root
+        self.root = SSHStorage.normalise(root)
         describe = "\(options.label), \(self.root)"
     }
+
+    /// "/srv/x/" → "/srv/x"; "~/backups" → "backups" (relative to the home folder ssh lands in); "" → "."
+    static func normalise(_ root: String) -> String {
+        var r = root.trimmingCharacters(in: .whitespaces)
+        if r.hasPrefix("~/") { r = String(r.dropFirst(2)) } else if r == "~" { r = "" }
+        while r.count > 1 && r.hasSuffix("/") { r.removeLast() }
+        if r.isEmpty || r == "." { return "." }
+        // a relative root that starts with "-" would read as an option to find/rm
+        return r.hasPrefix("-") ? "./" + r : r
+    }
+
+    /// Closes the shared connection when a run is done with this destination.
+    public func close() async { await client.close() }
 
     private func q(_ path: RelPath) -> String { Shell.quote(joinPath(root, path)) }
 
@@ -178,53 +212,68 @@ public final class SSHStorage: Storage, @unchecked Sendable {
     }
 
     public func makeDirectory(_ path: RelPath) async throws {
-        let r = try await client.run("mkdir -p \(q(path))")
+        // a file or link in the way must go; mkdir -p would "succeed" on a link to a folder
+        let r = try await client.run("if test -L \(q(path)) || { test -e \(q(path)) && ! test -d \(q(path)); }; then rm -rf -- \(q(path)); fi; mkdir -p -- \(q(path))")
         guard r.ok else { throw DSError("The folder \(path) could not be made on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
     public func remove(_ path: RelPath) async throws {
         guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
-        let r = try await client.run("rm -rf \(q(path))")
+        let r = try await client.run("rm -rf -- \(q(path))")
         guard r.ok else { throw DSError("\(path) could not be removed on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
     public func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws {
         let perms = String(format: "%o", Int(meta.permissions ?? 0o644) & 0o777)
         let stamp = SSHStorage.touchStamp(meta.modified)
-        let command = "rm -rf \(q(path)) 2>/dev/null; cat > \(q(path)) && chmod \(perms) \(q(path)) && TZ=UTC touch -m -t \(stamp) \(q(path))"
+        // written under a temporary name and moved into place only when complete, so the old copy survives a
+        // dropped connection or a cancel and nothing half-written ever sits under the real name
+        let tmp = Shell.quote(joinPath(root, path) + ".datasyncer-part")
+        let command = "rm -rf -- \(tmp); cat > \(tmp) && chmod \(perms) \(tmp) && TZ=UTC touch -m -t \(stamp) -- \(tmp) && { if test -L \(q(path)) || test -d \(q(path)); then rm -rf -- \(q(path)); fi; mv -f -- \(tmp) \(q(path)); }"
         let r = try await client.feed(command, file: localURL, progress: progress)
+        if !r.ok { _ = try? await client.run("rm -f -- \(tmp)") }
         guard r.ok else { throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
     public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
         try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: localURL.path) { try? FileManager.default.removeItem(at: localURL) }
-        let r = try await client.drain("cat \(q(path))", to: localURL)
-        guard r.ok else { throw DSError("\(path) could not be read from \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
-        try LocalStorage.apply(meta, to: localURL)
+        let tmp = localURL.deletingLastPathComponent().appendingPathComponent(".\(localURL.lastPathComponent).datasyncer-part")
+        let r: ShellResult
+        do { r = try await client.drain("cat -- \(q(path))", to: tmp) } catch { try? FileManager.default.removeItem(at: tmp); throw error }
+        guard r.ok else { try? FileManager.default.removeItem(at: tmp); throw DSError("\(path) could not be read from \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
+        try LocalStorage.apply(meta, to: tmp)
+        if let m = LocalStorage.meta(at: localURL), m.isDirectory || m.isSymlink { try? FileManager.default.removeItem(at: localURL) }
+        guard rename(tmp.path, localURL.path) == 0 else { try? FileManager.default.removeItem(at: tmp); throw DSError("Could not put \(localURL.lastPathComponent) in place.") }
     }
 
     public func readData(_ path: RelPath) async throws -> Data {
-        let r = try await client.run("cat \(q(path))")
+        let r = try await client.run("cat -- \(q(path))")
         guard r.ok else { throw DSError("\(path) could not be read from \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
         return r.stdout
     }
 
     public func writeData(_ data: Data, to path: RelPath) async throws {
-        let r = try await client.run("cat > \(q(path))", stdin: data)
-        guard r.ok else { throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
+        let tmp = Shell.quote(joinPath(root, path) + ".datasyncer-part")
+        let r = try await client.run("cat > \(tmp) && mv -f -- \(tmp) \(q(path))", stdin: data)
+        guard r.ok else { _ = try? await client.run("rm -f -- \(tmp)"); throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
     public func freeSpace() async throws -> Int64? {
-        let r = try await client.run("df -Pk \(q(""))")
+        let r = try await client.run("df -Pk -- \(q(""))")
         guard r.ok, let last = r.text.split(separator: "\n").last else { return nil }
         let cols = last.split(separator: " ", omittingEmptySubsequences: true)
         guard cols.count >= 4, let kb = Int64(cols[3]) else { return nil }
         return kb * 1024
     }
 
+    public func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws {
+        let perms = String(format: "%o", Int(meta.permissions ?? 0o755) & 0o777)
+        _ = try await client.run("chmod \(perms) \(q(path)) && TZ=UTC touch -m -t \(SSHStorage.touchStamp(meta.modified)) -- \(q(path))")
+    }
+
     public func makeSymlink(_ path: RelPath, target: String) async throws {
-        let r = try await client.run("rm -rf \(q(path)) 2>/dev/null; ln -s \(Shell.quote(target)) \(q(path))")
+        let r = try await client.run("rm -rf -- \(q(path)) 2>/dev/null; ln -s -- \(Shell.quote(target)) \(q(path))")
         guard r.ok else { throw DSError("The link \(path) could not be made on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
@@ -242,15 +291,21 @@ public final class SSHStorage: Storage, @unchecked Sendable {
         case .some(let d): depthArgs = "-mindepth \(d) -maxdepth \(d)"
         case nil: depthArgs = "-mindepth 1"
         }
+        // -H: a root that is itself a link to a folder (common on NAS boxes) is followed; entries below are not
+        let follow = depth == 0 ? "" : "-H "
         let command: String
         switch flavour {
-        case .gnu: command = "find \(qp) \(depthArgs) -printf '%y\\t%s\\t%T@\\t%m\\t%l\\t%p\\n'"
-        case .bsd: command = "find \(qp) \(depthArgs) -exec stat -f '%HT%t%z%t%m%t%OLp%t%Y%t%N' {} +"
+        case .gnu: command = "find \(follow)\(qp) \(depthArgs) -printf '%y\\t%s\\t%T@\\t%m\\t%l\\t%p\\n'"
+        case .bsd: command = "find \(follow)\(qp) \(depthArgs) -exec stat -f '%HT%t%z%t%m%t%OLp%t%Y%t%N' {} +"
         }
         let r = try await client.run(command)
         if !r.ok {
-            if r.stderr.lowercased().contains("no such file") { return [] }
-            if r.stdout.isEmpty { throw DSError("Listing \(path) on \(client.options.host) failed: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
+            // find carries on after an entry it could not read and exits 1: keep what it listed. Only a listing
+            // that produced nothing is taken as "not there" (or as a failure when it says more than that)
+            if r.stdout.isEmpty {
+                if r.stderr.lowercased().contains("no such file") { return [] }
+                throw DSError("Listing \(path) on \(client.options.host) failed: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+            }
         }
         return SSHStorage.parseFind(r.text, flavour: flavour)
     }

@@ -47,7 +47,12 @@ public final class KeychainSecrets: SecretStore {
         var q = query(account)
         q[kSecValueData as String] = data
         q[kSecAttrLabel as String] = "Data Syncer — \(account)"
-        let added = SecItemAdd(q as CFDictionary, nil)
+        var added = SecItemAdd(q as CFDictionary, nil)
+        if added == errSecDuplicateItem {
+            // an item the update could not match (an older ACL): replace it
+            SecItemDelete(query(account) as CFDictionary)
+            added = SecItemAdd(q as CFDictionary, nil)
+        }
         guard added == errSecSuccess else { throw KeychainSecrets.error(added, "save") }
     }
 

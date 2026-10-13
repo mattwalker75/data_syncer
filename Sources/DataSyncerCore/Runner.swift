@@ -142,7 +142,7 @@ public struct DefaultStorageFactory: StorageFactory {
             } else {
                 let password = try secrets.secret(for: SecretAccount.destination(d.id))
                 let bare = url.user == nil ? url : { var c = URLComponents(url: url, resolvingAgainstBaseURL: false)!; c.user = nil; c.password = nil; return c.url! }()
-                mount = try NetworkShare.mount(bare, user: url.user?.removingPercentEncoding, password: password)
+                mount = try await NetworkShare.mount(bare, user: url.user?.removingPercentEncoding, password: password)
             }
             let folder = d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let root = folder.isEmpty ? mount : mount.appendingPathComponent(folder, isDirectory: true)
@@ -234,6 +234,7 @@ public final class JobRunner: @unchecked Sendable {
             do { storage = try await factory.storage(for: d); try await storage.checkReachable() }
             catch let e as DSError { check("Destination", false, e.message); throw e }
             check("Destination", true, storage.describe)
+            defer { let s = storage; Task.detached { await s.close() } }
             do { try await Records.ensure(on: storage, job: job, destination: d, otherJobIds: otherJobIds(job)) }
             catch let e as DSError { check("Folder in use", false, e.message); throw e }
             try Task.checkCancellation()

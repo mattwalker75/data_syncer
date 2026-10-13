@@ -15,53 +15,68 @@ public enum NetworkShare {
             let from = withUnsafePointer(to: &fs.f_mntfromname) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) } }
             let on = withUnsafePointer(to: &fs.f_mntonname) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) } }
             let type = withUnsafePointer(to: &fs.f_fstypename) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MFSTYPENAMELEN)) { String(cString: $0) } }
-            if matches(mountedFrom: from, mountedOn: on, fsType: type, url: url) { return URL(fileURLWithPath: on, isDirectory: true) }
+            // the OS knows which server URL a network volume came from; that is the reliable match
+            let remount = (try? URL(fileURLWithPath: on, isDirectory: true).resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting
+            if matches(mountedFrom: from, mountedOn: on, fsType: type, remount: remount, url: url) { return URL(fileURLWithPath: on, isDirectory: true) }
         }
         return nil
     }
 
-    /// Does a mount entry ("//matt@nas._smb._tcp.local/backups" on "/Volumes/backups") belong to smb://nas/backups?
-    static func matches(mountedFrom from: String, mountedOn on: String, fsType: String, url: URL) -> Bool {
-        guard ["smbfs", "afpfs", "webdav", "nfs"].contains(fsType), let wantHost = url.host?.lowercased() else { return false }
+    /// Does a mount entry belong to smb://nas/backups? `remount` is the URL macOS recorded for the volume
+    /// (the reliable answer, host and share); `from` is f_mntfromname ("//matt@nas._smb._tcp.local/backups"),
+    /// usable for SMB. A share whose host cannot be told is never a match — the wrong machine's "backups"
+    /// share must not become the destination.
+    static func matches(mountedFrom from: String, mountedOn on: String, fsType: String, remount: URL?, url: URL) -> Bool {
+        func bare(_ h: String) -> String { h.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")) }   // IPv6 literals
+        guard ["smbfs", "afpfs", "webdav", "nfs"].contains(fsType), let wantHost = url.host.map(bare) else { return false }
         let wantShare = url.path.split(separator: "/").first.map { String($0).removingPercentEncoding?.lowercased() ?? String($0).lowercased() } ?? ""
         guard !wantShare.isEmpty else { return false }
-        // the share name: the last part of f_mntfromname, or of the mount point for file systems that hide it
-        var hostPart = "", sharePart = ""
-        if from.hasPrefix("//") {
-            let rest = from.dropFirst(2)
-            if let slash = rest.firstIndex(of: "/") {
-                hostPart = String(rest[..<slash]); sharePart = String(rest[rest.index(after: slash)...])
-            }
-            if let at = hostPart.lastIndex(of: "@") { hostPart = String(hostPart[hostPart.index(after: at)...]) }
-            if let colon = hostPart.firstIndex(of: ":") { hostPart = String(hostPart[..<colon]) }
-        } else {
-            sharePart = (on as NSString).lastPathComponent
-        }
-        sharePart = sharePart.removingPercentEncoding ?? sharePart
-        guard sharePart.lowercased() == wantShare else { return false }
-        if hostPart.isEmpty { return true }
-        let a = hostPart.lowercased(), b = wantHost
-        // "nas", "nas.local" and "nas._smb._tcp.local" are the same machine
         func label(_ s: String) -> String { String(s.split(separator: ".").first ?? Substring(s)) }
-        return a == b || label(a) == label(b)
+        func sameHost(_ a: String) -> Bool { let a = bare(a); return a == wantHost || (!a.contains(":") && label(a) == label(wantHost)) }
+        if let remount, let h = remount.host {
+            let share = remount.path.split(separator: "/").first.map { String($0).removingPercentEncoding?.lowercased() ?? String($0).lowercased() } ?? ""
+            return sameHost(h) && share == wantShare
+        }
+        guard from.hasPrefix("//") else { return false }
+        var hostPart = "", sharePart = ""
+        let rest = from.dropFirst(2)
+        if let slash = rest.firstIndex(of: "/") {
+            hostPart = String(rest[..<slash]); sharePart = String(rest[rest.index(after: slash)...])
+        }
+        if let at = hostPart.lastIndex(of: "@") { hostPart = String(hostPart[hostPart.index(after: at)...]) }
+        if hostPart.hasPrefix("["), let close = hostPart.firstIndex(of: "]") { hostPart = String(hostPart[hostPart.index(after: hostPart.startIndex)..<close]) }   // [::1]:445
+        else if let colon = hostPart.firstIndex(of: ":") { hostPart = String(hostPart[..<colon]) }
+        sharePart = sharePart.removingPercentEncoding ?? sharePart
+        return !hostPart.isEmpty && sameHost(hostPart) && sharePart.lowercased() == wantShare
     }
 
     /// Connects the share the way Finder's "Connect to Server" does, without any window, and returns where it
     /// was mounted. `user`/`password` nil = whatever the Keychain or the server allows (a guest share, say).
-    public static func mount(_ url: URL, user: String?, password: String?) throws -> URL {
+    /// Runs on NetFS's own queue so a slow or absent server never blocks, and a cancelled run stops the attempt.
+    public static func mount(_ url: URL, user: String?, password: String?) async throws -> URL {
         let open = NSMutableDictionary()
         open[kNAUIOptionKey] = kNAUIOptionNoUI
         let mountOpts = NSMutableDictionary()
         mountOpts[kNetFSAllowSubMountsKey] = true
-        var points: Unmanaged<CFArray>?
-        let status = NetFSMountURLSync(url as CFURL, nil, user as CFString?, password as CFString?, open, mountOpts, &points)
-        guard status == 0 else { throw explain(status, url) }
-        guard let list = points?.takeRetainedValue() as? [String], let first = list.first else {
-            // mounted, but no path came back: look it up
-            if let p = mountPoint(for: url) { return p }
-            throw DSError("The share \(url.absoluteString) was connected but its folder could not be found.")
+        let request = Locked<AsyncRequestID?>(nil)
+        let paths: [String] = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String], Error>) in
+                let queue = DispatchQueue(label: "datasyncer.netfs")
+                var id: AsyncRequestID?
+                let status = NetFSMountURLAsync(url as CFURL, nil, user as CFString?, password as CFString?, open, mountOpts, &id, queue) { status, _, points in
+                    if status != 0 { cont.resume(throwing: status == ECANCELED ? CancellationError() : explain(status, url)); return }
+                    cont.resume(returning: (points as? [String]) ?? [])
+                }
+                if status != 0 { cont.resume(throwing: explain(status, url)); return }
+                request.value = id
+            }
+        } onCancel: {
+            if let id = request.value { NetFSMountURLCancel(id) }
         }
-        return URL(fileURLWithPath: first, isDirectory: true)
+        if let first = paths.first { return URL(fileURLWithPath: first, isDirectory: true) }
+        // mounted, but no path came back: look it up
+        if let p = mountPoint(for: url) { return p }
+        throw DSError("The share \(url.absoluteString) was connected but its folder could not be found.")
     }
 
     static func explain(_ status: Int32, _ url: URL) -> DSError {
