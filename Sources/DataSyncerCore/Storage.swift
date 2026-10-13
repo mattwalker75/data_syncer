@@ -1,0 +1,217 @@
+// Where copies go. Every destination kind implements `Storage`; the engines only ever talk to this protocol, so
+// a sync to a USB drive and a sync to S3 run the same code. Step 1 ships LocalStorage (a folder on this Mac,
+// which also covers USB drives, connected network shares and cloud services that show up as a folder).
+//
+// Paths are RelPaths under the storage's root — the destination's configured folder.
+import Foundation
+
+public struct Entry: Equatable, Sendable {
+    public var name: String
+    public var meta: FileMeta
+    public init(name: String, meta: FileMeta) { self.name = name; self.meta = meta }
+}
+
+public protocol Storage: AnyObject, Sendable {
+    /// plain words for messages: "USB drive “Backup2TB”, /backup"
+    var describe: String { get }
+    /// Throws a DSError saying why the storage cannot be used right now (drive not connected, not signed in…).
+    func checkReachable() async throws
+    func exists(_ path: RelPath) async throws -> Bool
+    func stat(_ path: RelPath) async throws -> FileMeta?
+    /// immediate children of a folder
+    func list(_ dir: RelPath) async throws -> [Entry]
+    func makeDirectory(_ path: RelPath) async throws
+    /// a file, a link, or a folder with everything in it
+    func remove(_ path: RelPath) async throws
+    /// Copy a local file in, keeping its modified date (and permissions where the storage has them).
+    /// `progress` gets the bytes written so far, now and then.
+    func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws
+    /// Copy a file out to a local path, setting its modified date from `meta`.
+    func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws
+    func readData(_ path: RelPath) async throws -> Data
+    func writeData(_ data: Data, to path: RelPath) async throws
+    /// nil when the storage cannot say
+    func freeSpace() async throws -> Int64?
+    /// Make a symbolic link; a storage with no links throws DSError (the runner reports the file as skipped).
+    func makeSymlink(_ path: RelPath, target: String) async throws
+    /// Modified dates this storage can keep exactly (false: cloud services that round or replace them).
+    var keepsModifiedDates: Bool { get }
+}
+
+public extension Storage {
+    /// Every file and folder under `dir`, recursively, by relative path. The `.datasyncer` records folder at the
+    /// root is left out — it is Data Syncer's, not the user's data.
+    func walk(_ dir: RelPath = "") async throws -> Snapshot {
+        var out: Snapshot = [:]
+        var queue: [RelPath] = [dir]
+        while let current = queue.first {
+            queue.removeFirst()
+            for entry in try await list(current) {
+                let path = current.isEmpty ? entry.name : current + "/" + entry.name
+                if current.isEmpty && entry.name == Records.folderName { continue }
+                out[path] = entry.meta
+                if entry.meta.isDirectory && !entry.meta.isSymlink { queue.append(path) }
+            }
+        }
+        return out
+    }
+}
+
+/// Joins relative paths the way the storage expects ("" + "a" = "a", "a" + "b" = "a/b").
+public func joinPath(_ a: RelPath, _ b: RelPath) -> RelPath {
+    if a.isEmpty { return b }
+    if b.isEmpty { return a }
+    return a + "/" + b
+}
+
+// MARK: - A folder on this Mac
+
+public final class LocalStorage: Storage, @unchecked Sendable {
+    public let root: URL
+    public let describe: String
+    public let keepsModifiedDates = true
+    private let fm = FileManager.default
+
+    public init(root: URL, describe: String? = nil) {
+        self.root = root.standardizedFileURL
+        self.describe = describe ?? root.path
+    }
+
+    private func url(_ path: RelPath) -> URL {
+        path.isEmpty ? root : root.appendingPathComponent(path)
+    }
+
+    public func checkReachable() async throws {
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
+            throw DSError("The folder \(root.path) isn't there. Data Syncer never creates the destination folder itself — make it first, then try again.")
+        }
+        guard fm.isWritableFile(atPath: root.path) else {
+            throw DSError("The folder \(root.path) is there but can't be written to. Check its permissions.")
+        }
+    }
+
+    public func exists(_ path: RelPath) async throws -> Bool {
+        fm.fileExists(atPath: url(path).path)
+    }
+
+    public func stat(_ path: RelPath) async throws -> FileMeta? {
+        LocalStorage.meta(at: url(path))
+    }
+
+    /// What a local file looks like; nil when it isn't there.
+    public static func meta(at url: URL) -> FileMeta? {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path) else { return nil }
+        let type = attrs[.type] as? FileAttributeType
+        let isLink = type == .typeSymbolicLink
+        let isDir = type == .typeDirectory
+        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let size = isDir || isLink ? 0 : (attrs[.size] as? Int64 ?? Int64((attrs[.size] as? Int) ?? 0))
+        let perms = (attrs[.posixPermissions] as? Int).map { Int16($0) }
+        let target = isLink ? ((try? fm.destinationOfSymbolicLink(atPath: url.path)) ?? "") : ""
+        return FileMeta(isDirectory: isDir, isSymlink: isLink, size: size, modified: modified, linkTarget: target, permissions: perms)
+    }
+
+    public func list(_ dir: RelPath) async throws -> [Entry] {
+        let base = url(dir)
+        let names: [String]
+        do { names = try fm.contentsOfDirectory(atPath: base.path) } catch {
+            throw DSError("Could not read the folder \(base.path): \(error.localizedDescription)")
+        }
+        return names.compactMap { name in
+            LocalStorage.meta(at: base.appendingPathComponent(name)).map { Entry(name: name, meta: $0) }
+        }
+    }
+
+    public func makeDirectory(_ path: RelPath) async throws {
+        do { try fm.createDirectory(at: url(path), withIntermediateDirectories: true) } catch {
+            throw DSError("Could not make the folder \(path): \(error.localizedDescription)")
+        }
+    }
+
+    public func remove(_ path: RelPath) async throws {
+        guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
+        do { try fm.removeItem(at: url(path)) } catch {
+            throw DSError("Could not remove \(path): \(error.localizedDescription)")
+        }
+    }
+
+    public func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws {
+        let dest = url(path)
+        try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: dest.path) || (try? dest.checkResourceIsReachable()) == true {
+            try? fm.removeItem(at: dest) // a changed file is replaced whole; a link in the way goes too
+        }
+        try LocalStorage.copyFile(from: localURL, to: dest, progress: progress)
+        try LocalStorage.apply(meta, to: dest)
+    }
+
+    public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
+        try fm.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: localURL.path) { try? fm.removeItem(at: localURL) }
+        try LocalStorage.copyFile(from: url(path), to: localURL, progress: nil)
+        try LocalStorage.apply(meta, to: localURL)
+    }
+
+    public func readData(_ path: RelPath) async throws -> Data {
+        do { return try Data(contentsOf: url(path)) } catch {
+            throw DSError("Could not read \(path): \(error.localizedDescription)")
+        }
+    }
+
+    public func writeData(_ data: Data, to path: RelPath) async throws {
+        let dest = url(path)
+        try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do { try data.write(to: dest, options: .atomic) } catch {
+            throw DSError("Could not write \(path): \(error.localizedDescription)")
+        }
+    }
+
+    public func freeSpace() async throws -> Int64? {
+        let values = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        if let important = values?.volumeAvailableCapacityForImportantUsage { return important }
+        return values?.volumeAvailableCapacity.map { Int64($0) }
+    }
+
+    public func makeSymlink(_ path: RelPath, target: String) async throws {
+        let dest = url(path)
+        try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if fm.fileExists(atPath: dest.path) || (try? dest.checkResourceIsReachable()) == true { try? fm.removeItem(at: dest) }
+        do { try fm.createSymbolicLink(atPath: dest.path, withDestinationPath: target) } catch {
+            throw DSError("Could not make the link \(path): \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: helpers
+
+    /// A chunked copy so progress is reported while a big file copies and a cancel takes effect mid-file.
+    static func copyFile(from src: URL, to dst: URL, progress: (@Sendable (Int64) -> Void)?) throws {
+        guard let input = FileHandle(forReadingAtPath: src.path) else {
+            throw DSError("Could not read \(src.lastPathComponent) — is it still there, and readable?")
+        }
+        defer { try? input.close() }
+        guard FileManager.default.createFile(atPath: dst.path, contents: nil),
+              let output = FileHandle(forWritingAtPath: dst.path) else {
+            throw DSError("Could not create \(dst.lastPathComponent) at the destination.")
+        }
+        defer { try? output.close() }
+        var done: Int64 = 0
+        let chunk = 4 * 1024 * 1024
+        while true {
+            if Task.isCancelled { throw CancellationError() }
+            let data = try input.read(upToCount: chunk) ?? Data()
+            if data.isEmpty { break }
+            try output.write(contentsOf: data)
+            done += Int64(data.count)
+            progress?(done)
+        }
+    }
+
+    /// Modified date and permissions, as the source had them.
+    static func apply(_ meta: FileMeta, to url: URL) throws {
+        var attrs: [FileAttributeKey: Any] = [.modificationDate: Date(timeIntervalSince1970: meta.modified)]
+        if let p = meta.permissions { attrs[.posixPermissions] = Int(p) }
+        try? FileManager.default.setAttributes(attrs, ofItemAtPath: url.path)
+    }
+}

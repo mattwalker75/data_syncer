@@ -1,0 +1,14 @@
+# Build output
+.build/
+build/
+*.xcodeproj
+*.xcworkspace
+.swiftpm/
+DerivedData/
+
+# Local settings and data never live in the repo; the app keeps them in ~/Library/Application Support/Data Syncer/
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~
