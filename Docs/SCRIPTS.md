@@ -28,6 +28,9 @@ Intel Mac for Intel Macs; the build is for the kind of Mac that made it.
 
 ## BUILD_APP.sh
 
+Not meant to be run by a general user — `INSTALL_APP.sh` calls it for you. It is here for
+development (a quick rebuild without the tests or the install step).
+
 ```
 ./BUILD_APP.sh [options…]
 

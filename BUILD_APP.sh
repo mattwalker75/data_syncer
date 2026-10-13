@@ -2,9 +2,11 @@
 #
 # BUILD_APP.sh — build "Data Syncer.app" from the Swift code in this folder.
 #
+# This script should typically not be executed by a general user. Use the INSTALL_APP.sh program
+# instead: it checks the tools, runs the tests, calls this script and installs the app.
+#
 # What it does: compiles the app (swift build, release), then puts the program, the icon and the
 # app's Info.plist together as build/Data Syncer.app and signs it so it opens on this Mac.
-# Run it again after pulling new code. INSTALL_APP.sh calls it for you and copies the app to /Applications.
 #
 # Usage:  ./BUILD_APP.sh [options…]
 #
