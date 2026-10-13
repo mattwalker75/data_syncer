@@ -2,8 +2,10 @@
 #
 # BUILD_APP.sh — build "Data Syncer.app" from the Swift code in this folder.
 #
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
 # READ THIS -> This script should typically not be executed by a general user. Use the INSTALL_APP.sh program
 # instead: it checks the tools, runs the tests, calls this script and installs the app.
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
 #
 # What it does: compiles the app (swift build, release), then puts the program, the icon and the
 # app's Info.plist together as build/Data Syncer.app and signs it so it opens on this Mac.
@@ -19,9 +21,10 @@
 #
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$HERE"
-if [[ -t 1 ]]; then C_RESET=$'\033[0m'; C_RED=$'\033[0;31m'; C_GRN=$'\033[0;32m'; C_BLU=$'\033[0;34m'; else C_RESET=''; C_RED=''; C_GRN=''; C_BLU=''; fi
+if [[ -t 1 ]]; then C_RESET=$'\033[0m'; C_RED=$'\033[0;31m'; C_GRN=$'\033[0;32m'; C_BLU=$'\033[0;34m'; C_HI=$'\033[1;33m'; else C_RESET=''; C_RED=''; C_GRN=''; C_BLU=''; C_HI=''; fi
 info() { echo "${C_BLU}==>${C_RESET} $*"; }; ok() { echo "${C_GRN}OK ${C_RESET} $*"; }; err() { echo "${C_RED}ERROR${C_RESET} $*" >&2; }
-usage() { awk 'NR>=3 { if (/^#/) { sub(/^# ?/, ""); print } else { exit } }' "${BASH_SOURCE[0]}"; }
+# Prints the comment block above; the part between the two rules is shown bold and yellow on a terminal.
+usage() { awk -v HI="$C_HI" -v R="$C_RESET" 'NR>=3 { if (/^#/) { sub(/^# ?/, ""); if (/^─/) { if (hi) { print HI $0 R; hi=0; next } hi=1 }; print (hi ? HI $0 R : $0) } else { exit } }' "${BASH_SOURCE[0]}"; }
 
 CONFIG=release; OUT="$HERE/build"
 while [[ $# -gt 0 ]]; do
