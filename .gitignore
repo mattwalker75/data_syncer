@@ -12,3 +12,6 @@ DerivedData/
 .DS_Store
 *.swp
 *~
+
+# a half-finished icon build
+icon/DataSyncer.iconset/

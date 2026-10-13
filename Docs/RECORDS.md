@@ -7,7 +7,7 @@ Every destination folder Data Syncer has used holds a hidden `.datasyncer` folde
 | File | What it is |
 | --- | --- |
 | `.datasyncer/README.txt` | A note for anyone who finds the folder: *This is metadata used by the Data Syncer tool that is used to run adhoc backups and syncing of data from a source to one or more destinations. Seeing this means this is or was a destination used by the Data Syncer tool.* |
-| `.datasyncer/destination.json` | Which job and destination first used this folder, its mode, and when. |
+| `.datasyncer/destination.json` | Which job and destination use this folder, its mode, and since when. Checked at every run: a folder another destination (of this or another existing job) already uses is refused — two jobs mirroring one folder would erase each other's files. A record from a job that no longer exists is taken over. |
 | `.datasyncer/sync-state.json` | (Sync) Each file as it was written here last time — size and modified date at the destination, and the source file it came from. The next sync compares the source with this record *and* checks the copies still match it, so a copy changed or removed at the destination is put right. |
 
 Each dated backup folder holds its own record, `<backup>/.datasyncer/manifest.json`:
@@ -19,7 +19,8 @@ Each dated backup folder holds its own record, `<backup>/.datasyncer/manifest.js
 | `basedOn` | the folder name of the backup this incremental is measured against (none for a full) |
 | `snapshot` | the **whole source** as it was at this backup: every file, folder and link with size and modified date |
 | `copied` | what this folder actually contains — a full: everything; an incremental: only what changed |
-| `deleted` | gone from the source since `basedOn` (empty for a full) |
+| `failed` | files this backup could not copy (unreadable, locked); they are left out of `snapshot`, so the next incremental copies them, and a restore lists them as missing rather than pretending |
+| `deleted` | gone from the source since `basedOn` (empty for a full); never includes anything under a source folder the scan could not read |
 
 Because every manifest carries the whole snapshot, the next incremental is planned from it alone,
 and a restore knows every folder to recreate. Nothing is kept only on the Mac that made the backup:
@@ -35,7 +36,9 @@ its record goes with it, which is what you want.
 - year, month, day, hour and minute, so Finder sorts them in order;
 - `Full` or `Incremental`;
 - the title: the destination's *Backup title*, or the job's name, with anything that is not a
-  letter, digit, `-` or `_` turned into `_` so the name works on every drive and service.
+  letter, digit, `-` or `_` turned into `_` (runs of `_` collapsed to one; an empty title becomes
+  `backup`) so the name works on every drive and service. Backups of one title are a family of
+  their own: another title's backups in the same folder are never part of its chains.
 
 Two backups to the same destination in the same minute are refused ("wait a minute and run again").
 

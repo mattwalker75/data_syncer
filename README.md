@@ -25,26 +25,30 @@ themselves, and another Mac can use them.
 ## Status
 
 Built step by step. **Done:** step 1, the core (jobs, destinations, the scanner, sync, full and
-incremental backups, the records, restore and the pre-run checks, 25 tests) and step 2, the windows
+incremental backups, the records, restore and the pre-run checks) and step 2, the windows
 (the main window, job and destination editors, Check destinations, the run screen with the sync
 preview, Settings, notifications) and step 3, restore (pick a destination and a backup, restore the
 chain into a folder, delete old backups) and step 4, network shares (already connected, or connected
 by the app) and SSH servers through the Mac's own `ssh`, step 5, the cloud services (Amazon S3 and
 S3-compatible, Google Drive, Dropbox, OneDrive, with in-app setup guides), and step 6, appearance
-(accent colours, named themes) and polish. **All six steps are built (version 0.9.0); the next thing
-is real-world testing.** The cloud code is tested against fakes only so far — see
-Docs/DEVELOPMENT.md.
+(accent colours, named themes) and polish, followed by a deep review that fixed ~45 findings (data
+safety first: nothing is deleted under an unreadable source folder, nothing is written through a
+link, a half-copied file never replaces a good one, case-only renames keep the file). **Version
+0.9.1, 69 tests; the next thing is real-world testing.** The cloud code is tested against fakes only
+so far — see Docs/DEVELOPMENT.md.
 
 ## Quick start
 
 ```bash
-./INSTALL_APP.sh          # checks for Swift, runs the tests, builds Data Syncer.app, copies it to /Applications
-./INSTALL_APP.sh --to ~/Desktop   # same, but put the app on the Desktop instead
-./BUILD_APP.sh            # just rebuild the app (after pulling new code)
+./INSTALL_APP.sh                   # checks for Swift, runs the tests, builds Data Syncer.app, copies it to /Applications
+./INSTALL_APP.sh --to ~/Desktop    # same, but put the app on the Desktop instead
+./INSTALL_APP.sh --skip-tests      # run it again after pulling new code: rebuilds and replaces the app
+./INSTALL_APP.sh --universal       # one app for Apple-silicon and Intel Macs (to copy to another Mac)
 ```
 
 The finished `Data Syncer.app` can be copied to any other Mac running macOS 14 or newer and opened
-there; see [Docs/SCRIPTS.md](Docs/SCRIPTS.md) for the one-time "unidentified developer" step.
+there; see [Docs/SCRIPTS.md](Docs/SCRIPTS.md) for the one-time "Open Anyway" step, the chip question,
+and how to keep Full Disk Access across rebuilds. `BUILD_APP.sh` is for development only.
 
 **Requirements:** macOS 14 or newer and Xcode's command-line tools (`INSTALL_APP.sh` offers to
 install them).

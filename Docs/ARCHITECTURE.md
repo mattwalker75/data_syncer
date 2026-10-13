@@ -39,9 +39,9 @@ Sources/DataSyncer/
   DataSyncerApp.swift  the scenes: the main window, the Settings window, the menu commands
   AppModel.swift       the one object the views watch: jobs, history, settings, the run in progress
   RunSession.swift     a run as the views see it, built from RunEvents (throttled progress, a capped log)
-  MainWindow.swift     the split view: Sidebar, the toolbar, RunningStrip, the empty state
-  JobDetailView.swift  the selected job: header, source card, DestinationRow list, recent runs
-  Editors.swift        JobEditor, DestinationEditor, FolderPicker (NSOpenPanel, /Volumes)
+  MainWindow.swift     the split view: Sidebar, the toolbar, the running/finished strips, RunDetailsSheet, the empty state
+  JobDetailView.swift  the selected job: header, source card, DestinationRow list (reorder, Finder), recent runs
+  Editors.swift        JobEditor, FolderPicker (NSOpenPanel, /Volumes)
   CheckSheet.swift     "Check destinations" (Preflight) and the Full Disk Access shortcut
   RunScreen.swift      RunOptionsSheet (full/incremental per destination), RunScreen, SyncPreviewSheet
   RestoreSheet.swift   Restore…: destination → BackupCatalog → point, target, removeDeleted; delete a backup
@@ -50,7 +50,7 @@ Sources/DataSyncer/
   Themes.swift         ThemeColor, AccentChoice, CustomTheme, and `Theme` — the colours the views read, applied from settings
   CloudAccountSheet.swift  per-service setup guide + sign-in; DestinationEditor.swift  every destination kind's form
   Formatting.swift     dates/sizes/durations in words, status lines, colours, small shared views
-Tests/DataSyncerCoreTests/  Helpers (Scratch, makeTree, readTree, FixedClock), PlannerTests, RunnerTests
+Tests/DataSyncerCoreTests/  Helpers, PlannerTests, RunnerTests, SafetyTests, SSHTests (private sshd), CloudTests (fake HTTP)
 icon/               icon.svg → make_icns.sh → DataSyncer.icns (committed)
 ```
 
@@ -96,18 +96,29 @@ prints `$DATASYNCER_SSH_SECRET`); without one, `BatchMode=yes` so nothing ever w
 
 `JobRunner.run(job, choices:)`, for each enabled destination in order:
 
-1. **Source** — scanned once per run (`Scanner`): every file, folder and link, nothing skipped.
+1. **Source** — scanned once per run (`Scanner`): every file, folder and link, nothing skipped. One
+   `lstat` per entry. Folders the scan could not read are recorded as *unreadable*: nothing at or under
+   them is ever treated as gone from the source (no sync deletion, no incremental "deleted" entry).
 2. **Destination** — `factory.storage(for:)`, `checkReachable()` (the folder must already exist;
    Data Syncer never creates it), then `Records.ensure` writes the README and destination record
    if they are not there.
 3. **Plan** — `Planner.sync` (against the `sync-state` record and what is at the destination now)
-   or `Planner.backup` (full, or incremental against its parent manifest). The plan is reported in
-   words before anything is copied, then the free space is checked against it.
-4. **Copy** — folders made, files uploaded with progress (chunked, so a big file reports as it
-   goes and a cancel takes effect mid-file), links made, extras deleted (sync). Every file is
-   reported as copied, linked, deleted, skipped (with the reason) or failed.
-5. **Records** — a sync saves its state (on the way out too, so a cancelled run remembers what it
-   did); a backup writes its manifest last, and a backup that did not finish is removed.
+   or `Planner.backup` (full, or incremental against its parent manifest). A sync plan also lists what
+   is *in the way* (a file where a folder is wanted, a link where a file is) to replace first, and
+   carries a `warning` when it looks like a mistake (an empty source, most of the destination to be
+   deleted) — the preview shows it; without a preview the run refuses. The plan is reported in words
+   before anything is copied, then the free space is checked against it.
+4. **Copy** — for a sync, deletions and replacements come first (so a rename that only changes case
+   ends with the new name on every kind of disk), then folders, then files uploaded with progress
+   (chunked, so a big file reports as it goes and a cancel takes effect mid-file), then links, then
+   folder dates and permissions. Local and SSH copies land under a temporary name and are moved into
+   place only when complete — the old copy survives any failure. Every file is reported as copied,
+   linked, deleted, skipped (with the reason) or failed; a cancellation propagates as a cancellation.
+5. **Records** — a sync saves its state (on the way out too, awaited and outside the cancelled task);
+   a backup writes its manifest last — a file it could not copy is left out of the manifest's snapshot
+   and listed under `failed`, so the next incremental copies it — and a backup that did not finish is
+   removed (detached, so a cancel cannot stop the cleanup). Before any of this, `Records.ensure`
+   checks `destination.json`: a folder used by another destination or another existing job is refused.
 
 A failed destination does not stop the next one. The report lists every destination's status,
 counts, problems and the backup folder it made.
@@ -117,10 +128,12 @@ counts, problems and the backup folder it made.
 `RestoreEngine.plan` resolves the chain for a restore point (`BackupCatalog.chain`): the full,
 then each incremental up to and including the point. `restore` applies them in order into the
 chosen folder — files from each backup's `copied` list, folders from its snapshot — and, with
-`removeDeleted`, removes what each incremental recorded as deleted. A missing or unreadable link in
-the chain is refused with a message naming it; other backups are unaffected. Before copying it checks
-the target's free space (reported as a `.check` event). `RestoreEngine.delete` removes a backup folder
-on the user's say-so and returns `BackupCatalog.dependents(of:)`, the incrementals that depended on it.
+`removeDeleted`, removes what each incremental recorded as deleted — deletions first, then the
+backup's folders (clearing a file or link in the way), then its files. Nothing is written or removed
+outside the target folder, even through a link an earlier backup restored. A missing or unreadable
+link in the chain is refused with a message naming it; files a backup failed to copy are reported as
+missing. Before copying it checks the target's free space (a `.check` event). `RestoreEngine.delete`
+removes a backup folder on the user's say-so and returns `BackupCatalog.dependents(of:)`.
 
 ## The app
 
@@ -144,4 +157,5 @@ A restore is the same shape: `RestoreSheet` loads the destination's `BackupCatal
 
 **Development hooks** (environment variables, see DEVELOPMENT.md): `DATASYNCER_HOME` moves the
 jobs/history/settings folder; `DATASYNCER_AUTOSTART=<job name>` starts a run on launch;
-`DATASYNCER_AUTORESTORE` opens Restore… or starts one; `DATASYNCER_WINDOW=x,y,w,h` places the window.
+`DATASYNCER_AUTOSHEET` opens a sheet or Settings tab; `DATASYNCER_AUTORESTORE` opens Restore… or starts
+one; `DATASYNCER_WINDOW=x,y,w,h` places the window.
