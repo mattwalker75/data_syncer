@@ -90,7 +90,7 @@ struct RunScreen: View {
             Spacer()
             HStack(spacing: 8) {
                 if session.isRunning {
-                    Dot(color: Color.accentColor)
+                    Dot(color: Theme.accent)
                     Text("Running · destination \(max(session.position, 1)) of \(session.enabledCount) · started \(session.startedAt.formatted(date: .omitted, time: .shortened))")
                 } else if let r = session.report {
                     let o = Formatting.outcome(r)
@@ -113,7 +113,11 @@ struct RunScreen: View {
                     ForEach(Array(checks.enumerated()), id: \.offset) { _, c in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: c.1.ok ? "checkmark" : "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(c.1.ok ? Theme.good : Theme.problem).frame(width: 14)
-                            Text("\(c.1.name == "Source" ? "" : c.0 + " · ")\(c.1.name): \(c.1.detail)").font(.system(size: 12)).lineLimit(3)
+                            Text("\(c.1.name == "Source" ? "" : c.0 + " · ")\(c.1.name): \(c.1.detail)").font(.system(size: 12)).lineLimit(4)
+                        }
+                        if !c.1.ok, c.1.detail.contains("Full Disk Access") {
+                            Button("Give Data Syncer Full Disk Access…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
+                                .help("Opens System Settings → Privacy & Security → Full Disk Access; add Data Syncer there, then run again")
                         }
                     }
                 }
@@ -137,7 +141,7 @@ struct RunScreen: View {
         let color: Color = {
             switch d.phase {
             case .waiting: return .secondary
-            case .running: return .accentColor
+            case .running: return Theme.accent
             case .done(let s):
                 switch s { case .finished: return Theme.good; case .finishedWithProblems, .cancelled: return Theme.attention; case .failed: return Theme.problem; case .skipped: return .secondary }
             }
@@ -159,7 +163,7 @@ struct RunScreen: View {
         }
         .padding(12)
         .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(d.isRunning ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: d.isRunning ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(d.isRunning ? Theme.accent : Color(nsColor: .separatorColor), lineWidth: d.isRunning ? 2 : 1))
     }
 
     private var rightColumn: some View {
@@ -222,7 +226,7 @@ struct RunScreen: View {
                         HStack(spacing: 6) {
                             Text(c.progress.currentPath).lineLimit(1).truncationMode(.middle)
                             Text("copying…")
-                        }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Color.accentColor).id(-1)
+                        }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.accent).id(-1)
                     }
                 }
                 .padding(12)

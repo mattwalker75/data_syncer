@@ -53,7 +53,7 @@ final class RestoreSession: ObservableObject, Identifiable {
     func finish(_ r: RestoreResult) { result = r; progress.currentPath = "" }
 
     var outcome: (text: String, color: Color) {
-        guard let r = result else { return ("Restoring", .accentColor) }
+        guard let r = result else { return ("Restoring", Theme.accent) }
         switch r.status {
         case .finished: return ("Finished", Theme.good)
         case .finishedWithProblems: return ("\(r.problems.count) problem\(r.problems.count == 1 ? "" : "s")", Theme.attention)
@@ -106,7 +106,7 @@ struct RestoreScreen: View {
                             let state: (String, Color) = {
                                 guard let a = session.applying else { return ("Waiting", .secondary) }
                                 if i + 1 < a.index || (!session.isRunning && i + 1 <= a.index && session.result?.status != .cancelled) { return ("Applied", Theme.good) }
-                                if i + 1 == a.index { return (session.isRunning ? "Applying" : session.outcome.text, session.isRunning ? .accentColor : session.outcome.color) }
+                                if i + 1 == a.index { return (session.isRunning ? "Applying" : session.outcome.text, session.isRunning ? Theme.accent : session.outcome.color) }
                                 return ("Waiting", .secondary)
                             }()
                             HStack {
@@ -116,7 +116,7 @@ struct RestoreScreen: View {
                             }
                             .padding(10)
                             .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(state.0 == "Applying" ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: state.0 == "Applying" ? 2 : 1))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(state.0 == "Applying" ? Theme.accent : Color(nsColor: .separatorColor), lineWidth: state.0 == "Applying" ? 2 : 1))
                         }
                     } else {
                         Text("Working out the chain…").font(.system(size: 12.5)).foregroundStyle(.secondary)
@@ -196,7 +196,7 @@ struct RestoreScreen: View {
                     }
                     if session.isRunning, !session.progress.currentPath.isEmpty {
                         HStack(spacing: 6) { Text(session.progress.currentPath).lineLimit(1).truncationMode(.middle); Text("restoring…") }
-                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Color.accentColor).id(-1)
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.accent).id(-1)
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)

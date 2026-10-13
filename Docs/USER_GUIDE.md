@@ -113,8 +113,11 @@ deleting. It never deletes a backup on its own.
 - **General** — where the jobs and settings live, and a shortcut to Full Disk Access (needed when a
   source is in Desktop, Documents, Downloads or another folder macOS protects and a run says it can't
   be read).
-- **Appearance** — Light, Dark, or follow the system. Accent colours and your own themes come in a
-  later step.
+- **Appearance** — Light, Dark, or follow the system; the accent colour (nine to pick from, or any
+  colour of your own); and **your own themes**: **New theme…** opens an editor for the look, the
+  accent, the good / attention / problem colours and optional tints for the sidebar and cards — the
+  main window follows along while you adjust, **Save and use** keeps it, and the list lets you
+  switch between your themes and the plain system colours.
 - **Accounts** — what this Mac has for SSH (the keys in `~/.ssh`, what ssh-agent has loaded, the
   hosts in `~/.ssh/config`, how many servers `known_hosts` remembers — read only, with a button to
   open the folder); the share and SSH sign-ins Data Syncer keeps in your Keychain, each with

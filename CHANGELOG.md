@@ -2,9 +2,14 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
-## [Unreleased]
+## [0.9.0] — 2026-10-13 — every step built; ready for real-world testing
 
 ### Added
+- 2026-10-13: **Step 6 — appearance and polish.** Settings → Appearance: the accent colour (nine
+  presets or any colour), named custom themes (look, accent, good / attention / problem colours,
+  sidebar and card tints) with a live preview, Use / Edit / Delete, and "System colours" to go back.
+  The run screen offers "Give Data Syncer Full Disk Access…" right under a source check that needs
+  it. Version 0.9.0.
 - 2026-10-13: **Step 5 — the cloud services.** Amazon S3 (and S3-compatible: existing bucket, region,
   optional service address, folder in the bucket; SigV4; multipart uploads; never creates buckets),
   Google Drive (drive.file permission, resumable uploads, modified dates kept), Dropbox (upload

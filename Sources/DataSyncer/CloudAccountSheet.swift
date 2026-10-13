@@ -66,7 +66,7 @@ struct CloudAccountSheet: View {
                 }
             }
             if let (title, url) = link {
-                Button(title) { NSWorkspace.shared.open(url) }.buttonStyle(.link).font(.system(size: 12.5))
+                Button(title) { NSWorkspace.shared.open(url) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
             }
         }
         .padding(14)

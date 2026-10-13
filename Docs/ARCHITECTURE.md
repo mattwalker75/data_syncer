@@ -46,7 +46,9 @@ Sources/DataSyncer/
   RunScreen.swift      RunOptionsSheet (full/incremental per destination), RunScreen, SyncPreviewSheet
   RestoreSheet.swift   Restore…: destination → BackupCatalog → point, target, removeDeleted; delete a backup
   RestoreScreen.swift  RestoreSession (from RestoreEvents) and the restore screen
-  SettingsView.swift   General, Appearance, Accounts, Notifications, Run history
+  SettingsView.swift   the Settings tabs; AppearancePane.swift (look, accent, themes + ThemeEditor), AccountsPane.swift
+  Themes.swift         ThemeColor, AccentChoice, CustomTheme, and `Theme` — the colours the views read, applied from settings
+  CloudAccountSheet.swift  per-service setup guide + sign-in; DestinationEditor.swift  every destination kind's form
   Formatting.swift     dates/sizes/durations in words, status lines, colours, small shared views
 Tests/DataSyncerCoreTests/  Helpers (Scratch, makeTree, readTree, FixedClock), PlannerTests, RunnerTests
 icon/               icon.svg → make_icns.sh → DataSyncer.icns (committed)

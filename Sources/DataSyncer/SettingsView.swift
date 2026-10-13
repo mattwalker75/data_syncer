@@ -25,7 +25,7 @@ struct SettingsView: View {
             LabeledContent("Jobs and settings") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.store.url.deletingLastPathComponent().path).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.store.url]) }.buttonStyle(.link).font(.system(size: 12))
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.store.url]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
                 }
             }
             Section("Reading protected folders") {
@@ -37,20 +37,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    private var appearance: some View {
-        Form {
-            Picker("Look", selection: $model.settings.appearance) {
-                ForEach(Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.radioGroup)
-            Text("Follow the system switches with your Mac's Appearance setting, including automatic dark mode at night.")
-                .font(.system(size: 12.5)).foregroundStyle(.secondary)
-            Section("Accent colour and your own themes") {
-                Text("Coming in a later step: pick the accent colour, and save named themes of your own.").foregroundStyle(.secondary).font(.system(size: 12.5))
-            }
-        }
-        .formStyle(.grouped)
-    }
+    private var appearance: some View { AppearancePane() }
 
     private var accounts: some View { AccountsPane() }
 

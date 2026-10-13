@@ -23,7 +23,7 @@ struct CheckSheet: View {
                             SectionLabel("Source")
                             CheckRow(item: source)
                             if !source.ok, source.detail.contains("Full Disk Access") {
-                                Button("Open Privacy & Security settings…") { FullDiskAccess.openSettings() }.buttonStyle(.link).font(.system(size: 12.5))
+                                Button("Open Privacy & Security settings…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
                             }
                         }
                     }

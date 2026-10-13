@@ -16,7 +16,7 @@ struct AccountsPane: View {
                 HStack {
                     Text("SSH on this Mac").fontWeight(.semibold)
                     Spacer()
-                    Button("Open ~/.ssh in Finder") { NSWorkspace.shared.activateFileViewerSelecting([SSHInfo.sshDir]) }.buttonStyle(.link).font(.system(size: 12))
+                    Button("Open ~/.ssh in Finder") { NSWorkspace.shared.activateFileViewerSelecting([SSHInfo.sshDir]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
                     Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).foregroundStyle(.secondary)
                 }
                 if let ssh {

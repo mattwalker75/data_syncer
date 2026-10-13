@@ -133,22 +133,6 @@ enum Formatting {
     }
 }
 
-/// The colours the mockups use for good / attention / problem, and the badge tints per mode.
-enum Theme {
-    static let good = Color(red: 0.12, green: 0.62, blue: 0.33)
-    static let attention = Color(red: 0.85, green: 0.47, blue: 0.02)
-    static let problem = Color(red: 0.80, green: 0.18, blue: 0.18)
-
-    static func badge(_ mode: DestinationMode) -> (fill: Color, text: Color) {
-        switch mode {
-        // system colours, so the text reads on both light and dark grounds
-        case .sync: return (Color.green.opacity(0.16), Color.green)
-        case .fullOnly: return (Color.purple.opacity(0.16), Color.purple)
-        case .fullIncremental: return (Color.accentColor.opacity(0.16), Color.accentColor)
-        }
-    }
-}
-
 // MARK: - small shared views
 
 /// "DESTINATIONS · 3"
@@ -197,7 +181,7 @@ struct Card<Content: View>: View {
     var body: some View {
         content
             .padding(.horizontal, 16).padding(.vertical, 12)
-            .background(tinted ? Color(nsColor: .controlBackgroundColor).opacity(0.6) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
+            .background(tinted ? Color(nsColor: .controlBackgroundColor).opacity(0.6) : (Theme.cardTint?.opacity(0.35) ?? Color.clear), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
     }
 }

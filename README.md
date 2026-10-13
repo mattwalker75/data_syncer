@@ -29,9 +29,11 @@ incremental backups, the records, restore and the pre-run checks, 25 tests) and 
 (the main window, job and destination editors, Check destinations, the run screen with the sync
 preview, Settings, notifications) and step 3, restore (pick a destination and a backup, restore the
 chain into a folder, delete old backups) and step 4, network shares (already connected, or connected
-by the app) and SSH servers through the Mac's own `ssh`, and step 5, the cloud services (Amazon S3
-and S3-compatible, Google Drive, Dropbox, OneDrive, with in-app setup guides). **Next:** appearance
-and polish (6). The cloud code is tested against fakes only so far — see Docs/DEVELOPMENT.md.
+by the app) and SSH servers through the Mac's own `ssh`, step 5, the cloud services (Amazon S3 and
+S3-compatible, Google Drive, Dropbox, OneDrive, with in-app setup guides), and step 6, appearance
+(accent colours, named themes) and polish. **All six steps are built (version 0.9.0); the next thing
+is real-world testing.** The cloud code is tested against fakes only so far — see
+Docs/DEVELOPMENT.md.
 
 ## Quick start
 

@@ -45,7 +45,7 @@ final class AppModel: ObservableObject {
     @Published var screen: Screen = .jobs
     @Published var sheet: MainSheet?
     @Published var notice: Notice?
-    @Published var settings = AppSettings.load() { didSet { settings.save() } }
+    @Published var settings = AppSettings.load() { didSet { settings.save(); Theme.apply(settings) } }
     /// the run in progress, or the last one until the user leaves the run screen
     @Published var session: RunSession?
     /// the restore in progress, or the last one until the user leaves the restore screen
@@ -70,6 +70,7 @@ final class AppModel: ObservableObject {
         do { history = try historyStore.load() } catch let e as DSError { notice = Notice(title: "The run history could not be read", message: e.message) } catch {}
         do { cloudAccounts = try accountStore.load() } catch let e as DSError { notice = Notice(title: "The accounts file could not be read", message: e.message) } catch {}
         selectedJobId = jobs.first?.id
+        Theme.apply(settings)
         // development only: DATASYNCER_AUTOSTART=<job name> runs that job as soon as the window is up
         if let name = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSTART"], let job = jobs.first(where: { $0.name == name }) {
             selectedJobId = job.id
@@ -369,6 +370,14 @@ struct AppSettings: Codable, Equatable {
     var appearance: Appearance = .system
     var notifyWhenFinished = true
     var confirmBeforeDeleting = true
+    /// the accent when no theme is active
+    var accent: ThemeColor = .blue
+    var themes: [CustomTheme] = []
+    var activeThemeId: UUID?
+
+    var activeTheme: CustomTheme? { activeThemeId.flatMap { id in themes.first { $0.id == id } } }
+    /// the look in force: the theme's, or the plain setting
+    var effectiveAppearance: Appearance { activeTheme?.look ?? appearance }
 
     static var url: URL { JobStore.defaultURL().deletingLastPathComponent().appendingPathComponent("settings.json") }
 

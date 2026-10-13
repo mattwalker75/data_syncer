@@ -34,7 +34,7 @@ struct JobDetailView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(job.name).font(.system(size: 24, weight: .bold))
-                Button("Edit…") { model.sheet = .editJob(job) }.buttonStyle(.link).font(.system(size: 12.5))
+                Button("Edit…") { model.sheet = .editJob(job) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
             }
             HStack(spacing: 8) { Dot(color: last.color); Text(last.text) }.foregroundStyle(.primary)
             if model.isRunning, model.session?.isRunning != true || model.session?.job.id != job.id {
@@ -47,7 +47,7 @@ struct JobDetailView: View {
     private var source: some View {
         Card(tinted: true) {
             HStack(spacing: 14) {
-                Image(systemName: "folder").font(.system(size: 24)).foregroundStyle(Color.accentColor)
+                Image(systemName: "folder").font(.system(size: 24)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     SectionLabel("Source")
                     Text(job.sourcePath).font(.system(size: 14, weight: .semibold, design: .monospaced)).textSelection(.enabled)
@@ -83,7 +83,7 @@ struct JobDetailView: View {
                 SectionLabel("Destinations · \(job.destinations.count)")
                 Spacer()
                 Button { model.sheet = .newDestination(job) } label: { Label("Add destination", systemImage: "plus") }
-                    .buttonStyle(.link)
+                    .buttonStyle(.link).foregroundStyle(Theme.accent)
             }
             if job.destinations.isEmpty {
                 Card { Text("No destinations yet. Add a folder on this Mac or a USB drive to copy to.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }

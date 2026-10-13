@@ -106,10 +106,12 @@ struct Sidebar: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(Theme.sidebarTint == nil ? .automatic : .hidden)
+            .background(Theme.sidebarTint?.opacity(0.25) ?? Color.clear)
             Divider()
             HStack {
                 Button { model.newJob() } label: { Label("New job", systemImage: "plus") }
-                    .buttonStyle(.plain).foregroundStyle(Color.accentColor).fontWeight(.medium)
+                    .buttonStyle(.plain).foregroundStyle(Theme.accent).fontWeight(.medium)
                 Spacer()
                 SettingsLink { Image(systemName: "gearshape").font(.system(size: 15)) }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -141,7 +143,7 @@ struct SidebarRow: View {
                     if !running, let last, Formatting.outcome(last).text != "Finished" { Dot(color: Theme.attention, size: 7) }
                 }
                 if running, let s = model.session {
-                    Text(runningText(s)).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Color.accentColor)
+                    Text(runningText(s)).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent)
                 } else {
                     Text(subtitle(last)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -179,7 +181,7 @@ struct RunningStrip: View {
         HStack(spacing: 14) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 3) {
-                Text(headline).fontWeight(.semibold).foregroundStyle(Color.accentColor)
+                Text(headline).fontWeight(.semibold).foregroundStyle(Theme.accent)
                 HStack(spacing: 10) {
                     ProgressView(value: session.current?.progress.fraction ?? 0).frame(width: 260)
                     Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -190,7 +192,7 @@ struct RunningStrip: View {
             Button(session.cancelRequested ? "Cancelling…" : "Cancel run") { model.cancelRun() }.disabled(session.cancelRequested)
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
-        .background(Color.accentColor.opacity(0.1))
+        .background(Theme.accent.opacity(0.1))
         .overlay(alignment: .bottom) { Divider() }
     }
 
@@ -221,7 +223,7 @@ struct RestoringStrip: View {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 3) {
                 Text("Restoring \(session.job.name) from \(session.destination.name) into \(session.target.lastPathComponent)" + (session.applying.map { " — backup \($0.index) of \($0.of)" } ?? ""))
-                    .fontWeight(.semibold).foregroundStyle(Color.accentColor)
+                    .fontWeight(.semibold).foregroundStyle(Theme.accent)
                 HStack(spacing: 10) {
                     ProgressView(value: session.progress.fraction).frame(width: 260)
                     Text(session.progress.filesTotal > 0 ? "\(Formatting.count(session.progress.filesDone)) of \(Formatting.count(session.progress.filesTotal)) files" : "checking…")
@@ -233,7 +235,7 @@ struct RestoringStrip: View {
             Button(session.cancelRequested ? "Cancelling…" : "Cancel restore") { model.cancelRun() }.disabled(session.cancelRequested)
         }
         .padding(.horizontal, 20).padding(.vertical, 10)
-        .background(Color.accentColor.opacity(0.1))
+        .background(Theme.accent.opacity(0.1))
         .overlay(alignment: .bottom) { Divider() }
     }
 }
