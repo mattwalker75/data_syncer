@@ -31,6 +31,8 @@ Sources/DataSyncer/
   Editors.swift        JobEditor, DestinationEditor, FolderPicker (NSOpenPanel, /Volumes)
   CheckSheet.swift     "Check destinations" (Preflight) and the Full Disk Access shortcut
   RunScreen.swift      RunOptionsSheet (full/incremental per destination), RunScreen, SyncPreviewSheet
+  RestoreSheet.swift   Restore…: destination → BackupCatalog → point, target, removeDeleted; delete a backup
+  RestoreScreen.swift  RestoreSession (from RestoreEvents) and the restore screen
   SettingsView.swift   General, Appearance, Accounts, Notifications, Run history
   Formatting.swift     dates/sizes/durations in words, status lines, colours, small shared views
 Tests/DataSyncerCoreTests/  Helpers (Scratch, makeTree, readTree, FixedClock), PlannerTests, RunnerTests
@@ -75,7 +77,9 @@ counts, problems and the backup folder it made.
 then each incremental up to and including the point. `restore` applies them in order into the
 chosen folder — files from each backup's `copied` list, folders from its snapshot — and, with
 `removeDeleted`, removes what each incremental recorded as deleted. A missing or unreadable link in
-the chain is refused with a message naming it; other backups are unaffected.
+the chain is refused with a message naming it; other backups are unaffected. Before copying it checks
+the target's free space (reported as a `.check` event). `RestoreEngine.delete` removes a backup folder
+on the user's say-so and returns `BackupCatalog.dependents(of:)`, the incrementals that depended on it.
 
 ## The app
 
@@ -92,6 +96,11 @@ The views never touch disks: every status line ("Synced today 9:14 · 212 copied
 the history by `Formatting`. The source folder's size is counted once per job per session by a
 background `Scanner.scan`.
 
+A restore is the same shape: `RestoreSheet` loads the destination's `BackupCatalog` and plans with
+`RestoreEngine.plan`; `AppModel.startRestore` runs `RestoreEngine.restore` in a `Task`, feeding a
+`RestoreSession` shown by `RestoreScreen` and `RestoringStrip`. A run and a restore never overlap
+(`isRunning` covers both).
+
 **Development hooks** (environment variables, see DEVELOPMENT.md): `DATASYNCER_HOME` moves the
 jobs/history/settings folder; `DATASYNCER_AUTOSTART=<job name>` starts a run on launch;
-`DATASYNCER_WINDOW=x,y,w,h` places the window.
+`DATASYNCER_AUTORESTORE` opens Restore… or starts one; `DATASYNCER_WINDOW=x,y,w,h` places the window.

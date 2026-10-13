@@ -354,3 +354,59 @@ final class HistoryAndPreviewTests: XCTestCase {
         XCTAssertNil(runs.lastRun(of: UUID()))
     }
 }
+
+// MARK: - deleting backups and the restore checks (step 3)
+
+final class BackupDeletionTests: XCTestCase {
+    func testDependentsAndDeleteFromTheApp() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(source: src, dest: dst, mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 10), title: "T")
+        let clock = FixedClock(); let r = runner(clock)
+        _ = await r.run(job, choices: [job.destinations[0].id: .full]) { _ in }           // full
+        makeTree(src, ["b.txt": "B"]); clock.tick()
+        _ = await r.run(job) { _ in }                                                       // inc 1
+        makeTree(src, ["c.txt": "C"]); clock.tick()
+        _ = await r.run(job) { _ in }                                                       // inc 2 (based on inc 1)
+        let storage = LocalStorage(root: dst, describe: "dst")
+        var catalog = try await BackupCatalog.load(from: storage)
+        let full = catalog.entries.first { $0.parsed.kind == .full }!.folder
+        let inc1 = catalog.entries.first { $0.manifest?.basedOn == full }!.folder
+        let inc2 = catalog.entries.first { $0.manifest?.basedOn == inc1 }!.folder
+        XCTAssertEqual(catalog.dependents(of: full).map(\.folder), [inc2, inc1])
+        XCTAssertEqual(catalog.dependents(of: inc1).map(\.folder), [inc2])
+        XCTAssertEqual(catalog.dependents(of: inc2), [])
+        // delete the middle one: only inc 2 is stranded; the full still restores
+        let stranded = try await RestoreEngine.delete(inc1, from: storage, catalog: catalog)
+        XCTAssertEqual(stranded.map(\.folder), [inc2])
+        catalog = try await BackupCatalog.load(from: storage)
+        XCTAssertNil(catalog.entry(inc1))
+        XCTAssertThrowsError(try RestoreEngine.plan(catalog, point: inc2))
+        XCTAssertEqual(try RestoreEngine.plan(catalog, point: full).chain, [full])
+        do { try await RestoreEngine.delete(inc1, from: storage, catalog: catalog); XCTFail("deleted twice") }
+        catch let e as DSError { XCTAssertTrue(e.message.contains("isn't at the destination")) }
+    }
+
+    func testRestoreReportsAFreeSpaceCheck() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst"), target = s.dir("target")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(source: src, dest: dst, mode: .fullOnly, title: "T")
+        _ = await runner(FixedClock()).run(job) { _ in }
+        let storage = LocalStorage(root: dst, describe: "dst")
+        let catalog = try await BackupCatalog.load(from: storage)
+        let checks = Locked<[String]>([])
+        let result = await RestoreEngine.restore(from: storage, catalog: catalog, point: catalog.entries[0].folder, to: target, removeDeleted: true) { e in
+            if case .check(let name, let ok, _) = e { checks.with { $0.append("\(name):\(ok)") } }
+        }
+        XCTAssertEqual(result.status, .finished)
+        XCTAssertEqual(checks.with { $0 }, ["Free space:true"])
+        XCTAssertEqual(readTree(target), ["a.txt": "A"])
+    }
+}
+
+/// A tiny lock for collecting events from a @Sendable closure in tests.
+final class Locked<T>: @unchecked Sendable {
+    private var value: T; private let lock = NSLock()
+    init(_ v: T) { value = v }
+    func with<R>(_ f: (inout T) -> R) -> R { lock.lock(); defer { lock.unlock() }; return f(&value) }
+}

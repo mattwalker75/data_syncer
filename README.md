@@ -27,8 +27,9 @@ themselves, and another Mac can use them.
 Built step by step. **Done:** step 1, the core (jobs, destinations, the scanner, sync, full and
 incremental backups, the records, restore and the pre-run checks, 25 tests) and step 2, the windows
 (the main window, job and destination editors, Check destinations, the run screen with the sync
-preview, Settings, notifications) for folders on this Mac, iCloud Drive and USB drives.
-**Next:** the restore screen (3), network, SSH destinations (4), the cloud services (5), appearance (6).
+preview, Settings, notifications) and step 3, restore (pick a destination and a backup, restore the
+chain into a folder, delete old backups) — for folders on this Mac, iCloud Drive and USB drives.
+**Next:** network and SSH destinations (4), the cloud services (5), appearance (6).
 
 ## Quick start
 

@@ -5,6 +5,14 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 ## [Unreleased]
 
 ### Added
+- 2026-10-13: **Step 3 — restore.** Restore… (toolbar, Job menu): pick one of the job's backup
+  destinations, see its backups (kind, date, files, size, what each incremental is measured since,
+  unreadable records flagged), choose the restore point, the folder to restore into and whether files
+  recorded as deleted are removed; the chain to apply is shown, and a broken chain says which link is
+  missing. The restore screen (checks incl. free space, the backups as they are applied, progress,
+  counts, log, Show in Finder), Back to jobs with a restoring strip, cancel. Delete a backup from the
+  list, after a warning that names the incrementals that depend on it. Core: `BackupCatalog.dependents`,
+  `RestoreEngine.delete`, a free-space check and `.check` events in `RestoreEngine.restore`. 27 tests.
 - 2026-10-13: **Step 2 — the windows.** The main window (Theme 1: jobs down the left with their last
   run, the selected job's page with its source and size, destinations with mode badges, last-run
   lines and on/off switches, recent runs; New job and the Settings gear at the bottom of the sidebar;

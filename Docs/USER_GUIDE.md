@@ -13,7 +13,7 @@ on its own: open the app, pick a job, press **Run…**.
   more. The switch on the right turns a destination off without removing it — a paused destination
   is skipped until you turn it on again.
 - The toolbar: **Check destinations** (is everything reachable and writable? — copies nothing),
-  **Restore…** (coming in the next step), **Run…**.
+  **Restore…**, **Run…**.
 
 ## Making a job
 
@@ -53,6 +53,30 @@ or **Skip this destination**.
 - A destination that fails does not stop the next one. When the run ends you get a summary on the
   run screen, a line in the job's recent runs, and (if turned on in Settings) a notification.
 - Your Mac won't go to sleep while a run is going.
+
+## Restoring
+
+**Restore…** (toolbar or Job menu) works with the job's Full only and Full + incremental
+destinations — a Sync destination is a plain copy you can open in Finder.
+
+1. **From** — pick the destination. Data Syncer looks there and lists its backups, newest first:
+   kind, date, how many files it holds, and for an incremental which backup it is measured since.
+   A folder named like a backup whose record is missing or damaged is listed as such and can't be
+   restored.
+2. Click the **restore point**. The line under the options says what will be applied — for an
+   incremental, the chain's full backup and then each incremental up to and including the point. If
+   a link in the chain is gone, it says which, and Restore stays off.
+3. **Restore into** — a folder on this Mac; an empty one is best. Existing files with the same names
+   are replaced; nothing else there is touched.
+4. **Remove files the backups recorded as deleted** — on, the result matches the source as it was at
+   the restore point; off, those files are left for you to look at.
+5. **Restore**. The restore screen shows the checks (free space), the backups as they are applied,
+   progress and the file-by-file log; **Back to jobs** leaves it running with a strip, like a run.
+   When it finishes, **Show in Finder** opens the folder.
+
+**Deleting old backups:** the trash icon on a row (or right-click → Delete this backup…). Data Syncer
+says which incrementals depend on the backup and could no longer be restored, and asks before
+deleting. It never deletes a backup on its own.
 
 ## Settings (the gear, or ⌘,)
 

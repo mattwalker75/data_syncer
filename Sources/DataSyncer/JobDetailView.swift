@@ -37,8 +37,8 @@ struct JobDetailView: View {
                 Button("Edit…") { model.sheet = .editJob(job) }.buttonStyle(.link).font(.system(size: 12.5))
             }
             HStack(spacing: 8) { Dot(color: last.color); Text(last.text) }.foregroundStyle(.primary)
-            if model.isRunning, model.session?.job.id != job.id {
-                Text("Run… is unavailable until \(model.session?.job.name ?? "the running job") finishes. You can still look around, edit a job or check destinations.")
+            if model.isRunning, model.session?.isRunning != true || model.session?.job.id != job.id {
+                Text("Run… and Restore… are unavailable until \(model.runningName) finishes. You can still look around, edit a job or check destinations.")
                     .font(.system(size: 12.5)).foregroundStyle(.secondary)
             }
         }

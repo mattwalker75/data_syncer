@@ -26,6 +26,8 @@ public struct RestoreResult: Equatable, Sendable {
 }
 
 public enum RestoreEvent: Sendable {
+    /// a check before copying: what was checked, whether it passed, and the detail
+    case check(name: String, ok: Bool, detail: String)
     case planned(RestorePlan)
     case applying(backup: String, index: Int, of: Int)
     case progress(RunProgress)
@@ -33,6 +35,16 @@ public enum RestoreEvent: Sendable {
 }
 
 public enum RestoreEngine {
+    /// Deletes a backup folder at the destination — the user's decision; Data Syncer never does this on its own.
+    /// Returns the backups that depended on it (they can no longer be restored; everything else is unaffected).
+    @discardableResult
+    public static func delete(_ folder: String, from storage: Storage, catalog: BackupCatalog) async throws -> [BackupEntry] {
+        guard catalog.entry(folder) != nil else { throw DSError("The backup \(folder) isn't at the destination (any more).") }
+        let dependents = catalog.dependents(of: folder)
+        try await storage.remove(folder)
+        return dependents
+    }
+
     /// What restoring `point` would do. Throws when the chain is broken (a missing or unreadable backup).
     public static func plan(_ catalog: BackupCatalog, point: String) throws -> RestorePlan {
         let chain = try catalog.chain(endingAt: point)
@@ -60,6 +72,15 @@ public enum RestoreEngine {
             }
             let plan = try plan(catalog, point: point)
             onEvent(.planned(plan))
+            if let free = try? target.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+                let margin: Int64 = 50 * 1024 * 1024
+                if free < plan.bytes + margin {
+                    let msg = "Not enough space in \(target.path): \(ByteCount.string(plan.bytes)) to restore, \(ByteCount.string(free)) free."
+                    onEvent(.check(name: "Free space", ok: false, detail: msg))
+                    throw DSError(msg)
+                }
+                onEvent(.check(name: "Free space", ok: true, detail: "\(ByteCount.string(free)) free, \(ByteCount.string(plan.bytes)) needed"))
+            }
             var progress = RunProgress(filesTotal: plan.fileCount, bytesTotal: plan.bytes)
             for (i, folder) in plan.chain.enumerated() {
                 try Task.checkCancellation()

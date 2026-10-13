@@ -243,6 +243,15 @@ public struct BackupCatalog: Sendable {
         return members + [full]
     }
 
+    /// The backups that could no longer be restored if `folder` were deleted: every incremental whose chain
+    /// passes through it (newest first). Empty for a backup nothing depends on.
+    public func dependents(of folder: String) -> [BackupEntry] {
+        entries.filter { e in
+            e.folder != folder && e.manifest?.kind == .incremental
+                && ((try? chain(endingAt: e.folder))?.contains { $0.folder == folder } ?? false)
+        }
+    }
+
     /// Which backup a new incremental would be measured against, and whether one is allowed at all.
     public func incrementalParent(chainStart: ChainStart, maxIncrementals: Int) -> (parent: BackupEntry?, incrementalsSoFar: Int, reason: String?) {
         guard let full = newestFull else { return (nil, 0, "There is no full backup here yet, so the first backup must be a full one.") }

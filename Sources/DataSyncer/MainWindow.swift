@@ -11,6 +11,8 @@ struct MainWindow: View {
         Group {
             if model.screen == .run, let session = model.session {
                 RunScreen(session: session)
+            } else if model.screen == .restore, let session = model.restoreSession {
+                RestoreScreen(session: session)
             } else {
                 jobsScreen
             }
@@ -23,6 +25,7 @@ struct MainWindow: View {
             case .editDestination(let job, let d): DestinationEditor(job: job, destination: d)
             case .check(let job): CheckSheet(job: job)
             case .runOptions(let job): RunOptionsSheet(job: job)
+            case .restore(let job): RestoreSheet(job: job)
             }
         }
         .alert(item: $model.notice) { n in
@@ -47,6 +50,7 @@ struct MainWindow: View {
         } detail: {
             VStack(spacing: 0) {
                 if let session = model.session, session.isRunning { RunningStrip(session: session) }
+                else if let restore = model.restoreSession, restore.isRunning { RestoringStrip(session: restore) }
                 if let job = model.selectedJob {
                     JobDetailView(job: job)
                 } else {
@@ -61,9 +65,10 @@ struct MainWindow: View {
                     .labelStyle(.titleAndIcon)
                     .disabled(model.selectedJob == nil)
                     .help("See that every destination is reachable and writable, without copying anything")
-                Button { model.notice = Notice(title: "Restore is coming", message: "Restoring a backup is built in the next step.") } label: { Label("Restore…", systemImage: "arrow.counterclockwise") }
+                Button { model.askToRestore() } label: { Label("Restore…", systemImage: "arrow.counterclockwise") }
                     .labelStyle(.titleAndIcon)
                     .disabled(model.selectedJob == nil)
+                    .help("Put a full or incremental backup back into a folder you choose")
                 Button { model.askToRun() } label: { Label("Run…", systemImage: "play.fill") }
                     .labelStyle(.titleAndIcon)
                     .buttonStyle(.borderedProminent)
@@ -199,6 +204,33 @@ struct RunningStrip: View {
         if p.bytesTotal > 0 { s += " · \(Formatting.bytes(p.bytesDone)) of \(Formatting.bytes(p.bytesTotal))" }
         if let next = session.next { s += " · then \(next.destination.name)" }
         return s
+    }
+}
+
+/// The strip while a restore runs.
+struct RestoringStrip: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var session: RestoreSession
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ProgressView().controlSize(.small)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Restoring \(session.job.name) from \(session.destination.name) into \(session.target.lastPathComponent)" + (session.applying.map { " — backup \($0.index) of \($0.of)" } ?? ""))
+                    .fontWeight(.semibold).foregroundStyle(Color.accentColor)
+                HStack(spacing: 10) {
+                    ProgressView(value: session.progress.fraction).frame(width: 260)
+                    Text(session.progress.filesTotal > 0 ? "\(Formatting.count(session.progress.filesDone)) of \(Formatting.count(session.progress.filesTotal)) files" : "checking…")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Watch") { model.watchRun() }.buttonStyle(.borderedProminent)
+            Button(session.cancelRequested ? "Cancelling…" : "Cancel restore") { model.cancelRun() }.disabled(session.cancelRequested)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 10)
+        .background(Color.accentColor.opacity(0.1))
+        .overlay(alignment: .bottom) { Divider() }
     }
 }
 

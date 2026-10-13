@@ -6,7 +6,7 @@ import UserNotifications
 import DataSyncerCore
 
 /// Which screen the main window shows.
-enum Screen { case jobs, run }
+enum Screen { case jobs, run, restore }
 
 /// What the user is being asked, as a sheet on the main window.
 enum MainSheet: Identifiable {
@@ -16,6 +16,7 @@ enum MainSheet: Identifiable {
     case editDestination(Job, Destination)
     case check(Job)
     case runOptions(Job)
+    case restore(Job)
     var id: String {
         switch self {
         case .newJob: return "newJob"
@@ -24,6 +25,7 @@ enum MainSheet: Identifiable {
         case .editDestination(_, let d): return "editDest-\(d.id)"
         case .check(let j): return "check-\(j.id)"
         case .runOptions(let j): return "run-\(j.id)"
+        case .restore(let j): return "restore-\(j.id)"
         }
     }
 }
@@ -46,6 +48,8 @@ final class AppModel: ObservableObject {
     @Published var settings = AppSettings.load() { didSet { settings.save() } }
     /// the run in progress, or the last one until the user leaves the run screen
     @Published var session: RunSession?
+    /// the restore in progress, or the last one until the user leaves the restore screen
+    @Published var restoreSession: RestoreSession?
     /// a sync preview waiting for the user's answer
     @Published var preview: SyncPreviewRequest?
     /// the source folder's size, per job, counted in the background
@@ -65,12 +69,32 @@ final class AppModel: ObservableObject {
             selectedJobId = job.id
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start(job, choices: [:]) }
         }
+        // development only: DATASYNCER_AUTORESTORE="<job name>" opens Restore… for that job;
+        // "<job name>|<destination name>|<folder>" restores the newest backup there straight away
+        if let spec = ProcessInfo.processInfo.environment["DATASYNCER_AUTORESTORE"] {
+            let parts = spec.split(separator: "|").map(String.init)
+            if let job = jobs.first(where: { $0.name == parts[0] }) {
+                selectedJobId = job.id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    guard let self else { return }
+                    guard parts.count == 3, let d = job.destinations.first(where: { $0.name == parts[1] }) else { self.sheet = .restore(job); return }
+                    Task {
+                        guard let storage = try? await DefaultStorageFactory().storage(for: d), let catalog = try? await BackupCatalog.load(from: storage),
+                              let point = catalog.entries.first(where: { $0.manifest != nil })?.folder else { return }
+                        self.startRestore(job: job, destination: d, storage: storage, catalog: catalog, point: point, target: URL(fileURLWithPath: parts[2], isDirectory: true), removeDeleted: true)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: jobs
 
     var selectedJob: Job? { jobs.first { $0.id == selectedJobId } }
-    var isRunning: Bool { session?.isRunning ?? false }
+    /// a job or a restore is going; only one at a time
+    var isRunning: Bool { (session?.isRunning ?? false) || (restoreSession?.isRunning ?? false) }
+    /// what is going, for the strip and the sidebar
+    var runningName: String { session?.isRunning == true ? (session?.job.name ?? "") : "Restore" }
     var canRun: Bool { selectedJob != nil && !isRunning }
 
     func saveJobs() {
@@ -198,12 +222,46 @@ final class AppModel: ObservableObject {
     func cancelRun() {
         runTask?.cancel()
         session?.cancelRequested = true
+        restoreSession?.cancelRequested = true
         preview?.answer(false)
+    }
+
+    // MARK: restoring
+
+    func askToRestore() {
+        guard let job = selectedJob else { return }
+        sheet = .restore(job)
+    }
+
+    func startRestore(job: Job, destination: Destination, storage: Storage, catalog: BackupCatalog, point: String, target: URL, removeDeleted: Bool) {
+        guard !isRunning else { return }
+        let session = RestoreSession(job: job, destination: destination, point: point, target: target)
+        restoreSession = session
+        screen = .restore
+        sheet = nil
+        sleepActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated], reason: "Data Syncer is restoring files")
+        runTask = Task { [weak self] in
+            let result = await RestoreEngine.restore(from: storage, catalog: catalog, point: point, to: target, removeDeleted: removeDeleted) { event in
+                Task { @MainActor in session.apply(event) }
+            }
+            await MainActor.run { [weak self] in
+                session.finish(result)
+                self?.runTask = nil
+                if let a = self?.sleepActivity { ProcessInfo.processInfo.endActivity(a); self?.sleepActivity = nil }
+            }
+        }
+    }
+
+    func dismissRestore() {
+        if restoreSession?.isRunning == false { restoreSession = nil }
+        screen = .jobs
     }
 
     /// Back to the jobs list; the run (if still going) carries on and shows in the strip.
     func showJobs() { screen = .jobs }
-    func watchRun() { if session != nil { screen = .run } }
+    func watchRun() {
+        if restoreSession?.isRunning == true { screen = .restore } else if session != nil { screen = .run }
+    }
 
     /// Clears the finished run from the window.
     func dismissRun() {

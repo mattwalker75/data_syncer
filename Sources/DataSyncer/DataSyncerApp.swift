@@ -22,8 +22,9 @@ struct DataSyncerApp: App {
             CommandMenu("Job") {
                 Button("Run…") { model.askToRun() }.keyboardShortcut("r").disabled(!model.canRun)
                 Button("Check Destinations") { model.checkDestinations() }.keyboardShortcut("k").disabled(model.selectedJob == nil)
+                Button("Restore…") { model.askToRestore() }.disabled(model.selectedJob == nil || model.isRunning)
                 Divider()
-                Button("Cancel Run") { model.cancelRun() }.keyboardShortcut(".").disabled(!model.isRunning)
+                Button("Cancel Run or Restore") { model.cancelRun() }.keyboardShortcut(".").disabled(!model.isRunning)
             }
         }
 
