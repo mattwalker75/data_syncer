@@ -60,10 +60,20 @@ public enum DestinationKind: Codable, Equatable, Sendable {
     /// an SMB/AFP share: already connected in Finder, or connected by the app from `url`
     case networkShare(url: String)
     case sftp(host: String, port: Int, user: String, keyPath: String?)
-    case s3(bucket: String, region: String, endpoint: String?)
+    /// `account` is a CloudAccount id (the access key id and secret key live there)
+    case s3(account: String, bucket: String, region: String, endpoint: String?)
+    /// `account` is a CloudAccount id
     case googleDrive(account: String)
     case dropbox(account: String)
     case oneDrive(account: String)
+
+    /// the cloud account this destination signs in with, if any
+    public var cloudAccount: String? {
+        switch self {
+        case .s3(let a, _, _, _), .googleDrive(let a), .dropbox(let a), .oneDrive(let a): return a
+        default: return nil
+        }
+    }
 
     public var label: String {
         switch self {
@@ -71,7 +81,7 @@ public enum DestinationKind: Codable, Equatable, Sendable {
         case .usbDrive(let v): return "USB drive “\(v)”"
         case .networkShare(let u): return "Network share \(u)"
         case .sftp(let h, _, let u, _): return "SFTP \(u)@\(h)"
-        case .s3(let b, _, _): return "Amazon S3 “\(b)”"
+        case .s3(_, let b, _, _): return "Amazon S3 “\(b)”"
         case .googleDrive: return "Google Drive"
         case .dropbox: return "Dropbox"
         case .oneDrive: return "OneDrive"

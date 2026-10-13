@@ -27,6 +27,9 @@ public enum Records {
     static let plain: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
     }()
+    /// "2026-10-13T21:04:05.123Z" or "2026-10-13T21:04:05Z" (the services and the records both use these).
+    public static func parseDate(_ s: String) -> Date? { fractional.date(from: s) ?? plain.date(from: s) }
+
     static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.outputFormatting = [.prettyPrinted, .sortedKeys]

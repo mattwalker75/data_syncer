@@ -27,6 +27,14 @@ Sources/DataSyncerCore/
   SSHStorage.swift  SSHClient (the ssh command line, ControlMaster, askpass, error wording) and SSHStorage
   SSHInfo.swift     read-only view of ~/.ssh: keys, config hosts, agent, known_hosts
   NetworkShare.swift  is smb://host/share mounted (getmntinfo)? if not, mount it (NetFS) → LocalStorage
+  Cloud/HTTP.swift    URLSession wrapper (send / upload chunk / download to file), error wording, dates; tests swap the session
+  Cloud/OAuth.swift   PKCE sign-in through the browser + a loopback listener on localhost:45873, token refresh, TokenProvider
+  Cloud/CloudAccounts.swift  CloudProvider, CloudAccount (accounts.json), CloudSecret (Keychain "cloud:<id>"), each service's OAuth settings
+  Cloud/S3Storage.swift      SigV4 signing, ListObjectsV2, multipart uploads, "key/" folder markers
+  Cloud/GoogleDriveStorage.swift  Drive v3 with drive.file, path → id cache, resumable uploads
+  Cloud/DropboxStorage.swift      API v2, recursive list_folder, upload sessions
+  Cloud/OneDriveStorage.swift     Microsoft Graph /me/drive, path addressing, upload sessions
+  Cloud/Hashing.swift  SHA-256 / HMAC (CryptoKit)
 Sources/DataSyncer/
   DataSyncerApp.swift  the scenes: the main window, the Settings window, the menu commands
   AppModel.swift       the one object the views watch: jobs, history, settings, the run in progress
@@ -56,6 +64,22 @@ folder. `walk()` lists everything under a folder, leaving out the `.datasyncer` 
 folders, USB drives (found by name under `/Volumes`), network shares (used where Finder mounted
 them, else mounted with NetFS and the Keychain password → `LocalStorage`) and SSH servers
 (`SSHStorage`). It takes a `SecretStore`; secrets are looked up by destination id.
+
+**Cloud services** are plain HTTPS through `HTTP` (no SDKs). Each `Storage` reports sizes and dates
+*consistently* between `walk`/`list` and `stat`, which is all the sync planner needs (it compares the
+destination with what it recorded after writing). Google Drive, Dropbox and OneDrive set the file's
+modified date on upload; S3 can't, so its "date" is the upload time everywhere. Folders: S3 uses
+"key/" marker objects; the others have real folders. Links throw from `makeSymlink` and are reported
+as skipped. Uploads over 8 MB go in chunks (S3 multipart, Drive resumable, Dropbox and OneDrive
+upload sessions) so progress and cancellation work. Every provider has `makeRootFolder()` — the
+destination folder is created only when the user presses "Make this folder".
+
+**Accounts and secrets:** `CloudAccount` (service, label, client ID) lives in `accounts.json`;
+`CloudSecret` (OAuth tokens, Google's client secret, the S3 secret key) in the Keychain under
+`cloud:<account id>`. `TokenProvider` refreshes an access token before it expires and writes the new
+tokens back; a 401 invalidates it and the request is retried once. Sign-in: `OAuth.signIn` builds the
+authorization URL (PKCE S256), opens the browser, and `LoopbackListener` catches the redirect on the
+fixed port 45873 (Dropbox and Microsoft need the exact URI registered; Google accepts any loopback port).
 
 **SSH** uses the Mac's own `/usr/bin/ssh` (owner decision: built-in tools, `~/.ssh` as Terminal
 uses it). One master connection per server (`ControlMaster`, a socket under `/tmp/datasyncer-ssh-<uid>`)

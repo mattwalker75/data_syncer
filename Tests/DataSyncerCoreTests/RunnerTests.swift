@@ -309,7 +309,7 @@ final class PreflightAndStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(), [])
         let job = Job(name: "Work", sourcePath: "~/Documents/Work", destinations: [
             Destination(name: "USB", kind: .usbDrive(volumeName: "Backup2TB"), folder: "/backup/Work", mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 10)),
-            Destination(name: "S3", kind: .s3(bucket: "mw-backups", region: "us-east-1", endpoint: nil), folder: "work/", mode: .fullOnly, enabled: false),
+            Destination(name: "S3", kind: .s3(account: "acct", bucket: "mw-backups", region: "us-east-1", endpoint: nil), folder: "work/", mode: .fullOnly, enabled: false),
         ], createdAt: Date(timeIntervalSince1970: 1_792_000_000.5)) // dates are kept to the millisecond
         try store.save([job])
         XCTAssertEqual(try store.load(), [job])

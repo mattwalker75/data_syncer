@@ -82,3 +82,14 @@ public final class MemorySecrets: SecretStore, @unchecked Sendable {
     public func remove(for account: String) throws { lock.lock(); defer { lock.unlock() }; store.removeValue(forKey: account) }
     public func accounts() throws -> [String] { lock.lock(); defer { lock.unlock() }; return store.keys.sorted() }
 }
+
+/// Looks in `first`, then `second`; writes go to `first`. For trying a sign-in before it is saved.
+public struct LayeredSecrets: SecretStore {
+    public let first: SecretStore
+    public let second: SecretStore
+    public init(first: SecretStore, second: SecretStore) { self.first = first; self.second = second }
+    public func secret(for account: String) throws -> String? { try first.secret(for: account) ?? second.secret(for: account) }
+    public func set(_ secret: String, for account: String) throws { try first.set(secret, for: account) }
+    public func remove(for account: String) throws { try first.remove(for: account) }
+    public func accounts() throws -> [String] { Array(Set(try first.accounts() + second.accounts())).sorted() }
+}

@@ -51,7 +51,8 @@ enum Formatting {
         case .usbDrive: return "/" + d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         case .networkShare(let url): return url + (d.folder.isEmpty ? "" : "/" + d.folder)
         case .sftp(let host, _, _, _): return host + ":" + d.folder
-        case .s3, .googleDrive, .dropbox, .oneDrive: return d.folder
+        case .s3(_, let bucket, _, _): return bucket + "/" + d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        case .googleDrive, .dropbox, .oneDrive: return "/" + d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
     }
 

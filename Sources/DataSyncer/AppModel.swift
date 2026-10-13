@@ -59,12 +59,16 @@ final class AppModel: ObservableObject {
     let historyStore = RunHistory()
     /// passwords, passphrases and tokens: the Keychain
     let secrets: SecretStore = KeychainSecrets()
+    /// the cloud accounts (accounts.json); their tokens are in the Keychain
+    let accountStore = CloudAccountStore()
+    @Published var cloudAccounts: [CloudAccount] = []
     private var runTask: Task<Void, Never>?
     private var sleepActivity: NSObjectProtocol?
 
     init() {
         do { jobs = try store.load() } catch let e as DSError { notice = Notice(title: "The jobs file could not be read", message: e.message) } catch {}
         do { history = try historyStore.load() } catch let e as DSError { notice = Notice(title: "The run history could not be read", message: e.message) } catch {}
+        do { cloudAccounts = try accountStore.load() } catch let e as DSError { notice = Notice(title: "The accounts file could not be read", message: e.message) } catch {}
         selectedJobId = jobs.first?.id
         // development only: DATASYNCER_AUTOSTART=<job name> runs that job as soon as the window is up
         if let name = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSTART"], let job = jobs.first(where: { $0.name == name }) {
@@ -163,6 +167,30 @@ final class AppModel: ObservableObject {
         var job = job
         job.destinations.move(fromOffsets: from, toOffset: to)
         update(job)
+    }
+
+    // MARK: cloud accounts
+
+    func add(_ account: CloudAccount) {
+        cloudAccounts.append(account)
+        saveAccounts()
+    }
+
+    /// Forgets an account and its tokens. Destinations that used it say so the next time they run.
+    func remove(_ account: CloudAccount) {
+        cloudAccounts.removeAll { $0.id == account.id }
+        try? secrets.remove(for: SecretAccount.cloud(account.id))
+        saveAccounts()
+    }
+
+    private func saveAccounts() {
+        do { try accountStore.save(cloudAccounts) } catch { notice = Notice(title: "The accounts could not be saved", message: error.localizedDescription) }
+    }
+
+    /// The name of the account a destination uses, for the destination's row.
+    func accountLabel(_ kind: DestinationKind) -> String? {
+        guard let id = kind.cloudAccount else { return nil }
+        return cloudAccounts.first { $0.id.uuidString == id }?.label
     }
 
     // MARK: the source folder's size (shown on the job's page; counted once per job per session)

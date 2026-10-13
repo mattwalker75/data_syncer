@@ -6,7 +6,7 @@ import DataSyncerCore
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     // development only: DATASYNCER_AUTOSHEET=settings:<tab> opens on that tab
-    @State private var tab = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").last.map(String.init) ?? "general"
+    @State private var tab = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").dropFirst().first.map(String.init) ?? "general"
 
     var body: some View {
         TabView(selection: $tab) {

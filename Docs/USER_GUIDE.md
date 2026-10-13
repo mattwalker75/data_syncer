@@ -35,10 +35,26 @@ on its own: open the app, pick a job, press **Run…**.
     `~/.ssh`, with its passphrase if it has one), or with *a password*. "From ~/.ssh/config" fills
     the fields from a config entry. Settings → Accounts shows what this Mac has. The first time a
     server is used its identity is remembered in `~/.ssh/known_hosts`, as Terminal would;
-  - Amazon S3, Google Drive, Dropbox and OneDrive: the next step.
+  - **Amazon S3** (or an S3-compatible service such as Backblaze B2, Wasabi or MinIO): an account
+    (access key ID + secret key, saved once under Settings → Accounts or with **Add account…**), the
+    bucket, its region, the service's address for non-Amazon services, and a folder in the bucket.
+    Data Syncer never creates buckets.
+  - **Google Drive, Dropbox, OneDrive**: an account you sign in to once (the service's own sign-in
+    page opens in your browser; Data Syncer never sees your password; tokens go in your Keychain)
+    and a folder path in the service. The first time, **Add account…** shows a short one-time setup
+    guide: each service only lets an app in through a "client" or "app" you register yourself in its
+    developer console — a few minutes, free — and the guide walks through it. One account can serve
+    many destinations. Google Drive is asked only for the `drive.file` permission, so it sees only
+    the folders and files Data Syncer makes itself.
 
-  Every folder must already exist — Data Syncer never creates a destination folder.
-  **Test connection** tries the share or server with what you've typed, without copying anything.
+  Every folder must already exist — Data Syncer never creates a destination folder on its own. For
+  the cloud services, **Make this folder** in the editor creates it when you ask (for Google Drive
+  it is the only way, since the app can't see folders it didn't make). **Test connection** tries the
+  share, server or service with what you've typed, without copying anything.
+
+  Links (aliases made with `ln -s`) can't be kept in cloud services; the run reports each one as
+  skipped and carries on. Dates: Google Drive, Dropbox and OneDrive keep each file's modified date;
+  S3 can't, so Data Syncer remembers what it wrote and compares against that.
 - **Mode** — *Sync* (the destination is made to match the source; a switch decides whether files the
   source no longer has are deleted from the copy), *Full only* (every run makes a new dated folder
   with a complete copy), or *Full + incremental* (dated full and incremental backups; you choose
@@ -101,7 +117,10 @@ deleting. It never deletes a backup on its own.
   later step.
 - **Accounts** — what this Mac has for SSH (the keys in `~/.ssh`, what ssh-agent has loaded, the
   hosts in `~/.ssh/config`, how many servers `known_hosts` remembers — read only, with a button to
-  open the folder), and the sign-ins Data Syncer keeps in your Keychain, each with **Forget**.
+  open the folder); the share and SSH sign-ins Data Syncer keeps in your Keychain, each with
+  **Forget**; and the cloud accounts (Google Drive, Dropbox, OneDrive, Amazon S3) with **Add
+  account…** and **Sign out**. Signing out forgets the tokens; destinations that used the account
+  say so until you pick another.
 - **Notifications** — the notification when a run finishes.
 - **Run history** — every run, newest first; **Clear history…** forgets them (nothing at any
   destination is touched).

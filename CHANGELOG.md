@@ -5,6 +5,17 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 ## [Unreleased]
 
 ### Added
+- 2026-10-13: **Step 5 — the cloud services.** Amazon S3 (and S3-compatible: existing bucket, region,
+  optional service address, folder in the bucket; SigV4; multipart uploads; never creates buckets),
+  Google Drive (drive.file permission, resumable uploads, modified dates kept), Dropbox (upload
+  sessions, client_modified kept) and OneDrive (Graph, upload sessions, dates kept). Cloud accounts
+  added once and shared by destinations: a one-time setup guide per service in the app, the sign-in
+  in the browser with PKCE and a loopback listener (localhost:45873), tokens in the Keychain,
+  automatic refresh. "Make this folder" and "Test connection" in the destination editor; accounts
+  listed under Settings → Accounts with Sign out. Links are skipped and reported on cloud
+  destinations. Core: `HTTP`, `OAuth`/`TokenProvider`, `CloudAccountStore`, `CloudSecret`,
+  `LayeredSecrets`; the S3 kind now carries its account. A half-finished backup folder is now
+  removed before the run reports (was fire-and-forget). 48 tests (fakes for the services).
 - 2026-10-13: **Step 4 — network shares and SSH.** Network share destinations (`smb://` / `afp://`):
   used where Finder already mounted them, otherwise connected by the app with the Keychain password
   (NetFS, no window). SSH (SFTP) destinations through the Mac's own `ssh`: sign in like Terminal

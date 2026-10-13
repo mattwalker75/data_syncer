@@ -39,10 +39,10 @@ func readTree(_ root: URL) -> [String: String] {
     for case let url as URL in e {
         let rel = url.relativePath
         if rel == ".datasyncer" || rel.hasPrefix(".datasyncer/") || rel.contains("/.datasyncer") { e.skipDescendants(); continue }
-        let v = try! url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-        if v.isSymbolicLink == true { out[rel] = "@" + (try! fm.destinationOfSymbolicLink(atPath: url.path)) }
+        guard let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { continue }   // vanished meanwhile
+        if v.isSymbolicLink == true { out[rel] = "@" + ((try? fm.destinationOfSymbolicLink(atPath: url.path)) ?? "?") }
         else if v.isDirectory == true { out[rel] = "<dir>" }
-        else { out[rel] = String(data: try! Data(contentsOf: url), encoding: .utf8) ?? "<binary>" }
+        else if let data = try? Data(contentsOf: url) { out[rel] = String(data: data, encoding: .utf8) ?? "<binary>" }
     }
     return out
 }

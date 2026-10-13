@@ -14,7 +14,10 @@ struct DestinationEditor: View {
         case folder = "Folder on this Mac", iCloud = "iCloud Drive", usb = "USB drive", network = "Network share", sftp = "SSH server (SFTP)",
              s3 = "Amazon S3", googleDrive = "Google Drive", dropbox = "Dropbox", oneDrive = "OneDrive"
         var id: String { rawValue }
-        var available: Bool { [.folder, .iCloud, .usb, .network, .sftp].contains(self) }
+        var available: Bool { true }
+        var provider: CloudProvider? {
+            switch self { case .s3: return .s3; case .googleDrive: return .googleDrive; case .dropbox: return .dropbox; case .oneDrive: return .oneDrive; default: return nil }
+        }
     }
     enum ModeChoice: String, CaseIterable, Identifiable {
         case sync = "Sync", fullOnly = "Full only", fullIncremental = "Full + incremental"
@@ -41,6 +44,13 @@ struct DestinationEditor: View {
     @State private var keyPath = ""
     @State private var sshKeys: [SSHKey] = []
     @State private var configHosts: [SSHConfigHost] = []
+    // cloud
+    @State private var accountId = ""
+    @State private var bucket = ""
+    @State private var region = "us-east-1"
+    @State private var endpoint = ""
+    @State private var addingAccount: CloudProvider?
+    @State private var makingFolder = false
     // the sign-in (share password, SSH password or key passphrase)
     @State private var secret = ""
     @State private var secretLoaded = false
@@ -63,9 +73,7 @@ struct DestinationEditor: View {
                 Section {
                     TextField("Name", text: $name, prompt: Text(kind == .usb ? "Backup drive" : "Second copy"))
                     Picker("Where", selection: $kind) {
-                        ForEach(KindChoice.allCases) { k in
-                            Text(k.available ? k.rawValue : "\(k.rawValue) — coming in a later step").tag(k)
-                        }
+                        ForEach(KindChoice.allCases) { k in Text(k.rawValue).tag(k) }
                     }
                     .onChange(of: kind) { _, k in if !k.available { kind = .folder }; testResult = nil }
                     whereFields
@@ -98,8 +106,12 @@ struct DestinationEditor: View {
             }
             .formStyle(.grouped)
             HStack {
-                if kind == .network || kind == .sftp {
+                if kind == .network || kind == .sftp || kind.provider != nil {
                     Button(testing ? "Testing…" : "Test connection") { Task { await test() } }.disabled(testing || !valid)
+                    if kind.provider != nil {
+                        Button(makingFolder ? "Making…" : "Make this folder") { Task { await makeFolder() } }.disabled(makingFolder || !valid)
+                            .help("Creates the destination folder in the service — the one thing Data Syncer only does when you ask")
+                    }
                     if let r = testResult {
                         HStack(spacing: 6) { Dot(color: r.ok ? Theme.good : Theme.problem); Text(r.text).font(.system(size: 12)).lineLimit(2) }
                             .frame(maxWidth: 360, alignment: .leading).help(r.text)
@@ -114,6 +126,9 @@ struct DestinationEditor: View {
         .padding(20)
         .frame(width: 660)
         .onAppear(perform: load)
+        .sheet(item: $addingAccount) { p in
+            CloudAccountSheet(provider: p) { account in accountId = account.id.uuidString }
+        }
     }
 
     // MARK: where
@@ -195,8 +210,33 @@ struct DestinationEditor: View {
                 SecureField("Password", text: $secret, prompt: Text(hadSecret ? "(saved — type to replace)" : "kept in your Keychain"))
                 note("Passwords work when the server allows them; a key is safer and never asks again.")
             }
-        default:
-            EmptyView()
+        case .s3:
+            accountPicker(.s3)
+            TextField("Bucket", text: $bucket, prompt: Text("my-backups")).font(.system(.body, design: .monospaced))
+            TextField("Region", text: $region, prompt: Text("us-east-1")).font(.system(.body, design: .monospaced))
+            TextField("Service address (S3-compatible only)", text: $endpoint, prompt: Text("leave empty for Amazon; e.g. https://s3.us-west-004.backblazeb2.com")).font(.system(.body, design: .monospaced))
+            TextField("Folder in the bucket", text: $folder, prompt: Text("work-documents (leave empty for the bucket itself)")).font(.system(.body, design: .monospaced))
+            note("The bucket must already exist — Data Syncer never creates buckets. The folder must exist too; “Make this folder” below creates it in the bucket when you ask. Links in the source can't be kept in S3 and are reported as skipped.")
+        case .googleDrive, .dropbox, .oneDrive:
+            accountPicker(kind.provider!)
+            TextField("Folder in \(kind.rawValue)", text: $folder, prompt: Text("Data Syncer/Work documents")).font(.system(.body, design: .monospaced))
+            note(kind == .googleDrive
+                 ? "A path under My Drive. Data Syncer asks Google only for permission over files it makes itself, so the folder has to be made by Data Syncer: use “Make this folder” below. Links in the source are reported as skipped."
+                 : "A path from the top of your \(kind.rawValue). The folder must already exist; “Make this folder” below creates it when you ask. Links in the source are reported as skipped.")
+        }
+    }
+
+    @ViewBuilder private func accountPicker(_ p: CloudProvider) -> some View {
+        let accounts = model.cloudAccounts.filter { $0.provider == p }
+        HStack {
+            Picker("Account", selection: $accountId) {
+                if accounts.isEmpty { Text("none yet").tag("") }
+                else {
+                    if !accountId.isEmpty, !accounts.contains(where: { $0.id.uuidString == accountId }) { Text("(an account that was removed)").tag(accountId) }
+                    ForEach(accounts) { a in Text(a.label).tag(a.id.uuidString) }
+                }
+            }
+            Button("Add account…") { addingAccount = p }
         }
     }
 
@@ -221,6 +261,8 @@ struct DestinationEditor: View {
         case .usb: return !volume.isEmpty
         case .network: return URL(string: shareAddress.trimmingCharacters(in: .whitespaces))?.host != nil
         case .sftp: return !host.trimmingCharacters(in: .whitespaces).isEmpty && Int(port) != nil && !user.trimmingCharacters(in: .whitespaces).isEmpty && !folder.trimmingCharacters(in: .whitespaces).isEmpty && (auth != .key || !keyPath.isEmpty)
+        case .s3: return !accountId.isEmpty && !bucket.trimmingCharacters(in: .whitespaces).isEmpty && !region.trimmingCharacters(in: .whitespaces).isEmpty
+        case .googleDrive, .dropbox, .oneDrive: return !accountId.isEmpty && !folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).isEmpty
         default: return !folder.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
@@ -232,6 +274,8 @@ struct DestinationEditor: View {
         sshKeys = SSHInfo.keys(in: SSHInfo.sshDir)
         configHosts = SSHInfo.configHosts(at: SSHInfo.sshDir.appendingPathComponent("config"))
         guard let d = destination else { volume = volumes.first ?? ""; keyPath = sshKeys.first?.path ?? ""; return }
+        // a new destination: the first account of the kind, if any
+        if accountId.isEmpty, let p = kind.provider { accountId = model.cloudAccounts.first { $0.provider == p }?.id.uuidString ?? "" }
         name = d.name; folder = d.folder; enabled = d.enabled; backupTitle = d.backupTitle
         hadSecret = (try? model.secrets.secret(for: SecretAccount.destination(d.id))) != nil
         switch d.kind {
@@ -243,7 +287,10 @@ struct DestinationEditor: View {
         case .sftp(let h, let p, let u, let k):
             kind = .sftp; host = h; port = String(p); user = u
             if let k { auth = .key; keyPath = k } else { auth = hadSecret ? .password : .terminal }
-        default: kind = .folder
+        case .s3(let a, let b, let r, let e): kind = .s3; accountId = a; bucket = b; region = r; endpoint = e ?? ""
+        case .googleDrive(let a): kind = .googleDrive; accountId = a
+        case .dropbox(let a): kind = .dropbox; accountId = a
+        case .oneDrive(let a): kind = .oneDrive; accountId = a
         }
         switch d.mode {
         case .sync(let del): mode = .sync; deleteExtras = del
@@ -263,6 +310,12 @@ struct DestinationEditor: View {
             c.user = u.isEmpty ? nil : u
             k = .networkShare(url: c.string ?? shareAddress)
         case .sftp: k = .sftp(host: host.trimmingCharacters(in: .whitespaces), port: Int(port) ?? 22, user: user.trimmingCharacters(in: .whitespaces), keyPath: auth == .key ? keyPath : nil)
+        case .s3:
+            let e = endpoint.trimmingCharacters(in: .whitespaces)
+            k = .s3(account: accountId, bucket: bucket.trimmingCharacters(in: .whitespaces), region: region.trimmingCharacters(in: .whitespaces), endpoint: e.isEmpty ? nil : e)
+        case .googleDrive: k = .googleDrive(account: accountId)
+        case .dropbox: k = .dropbox(account: accountId)
+        case .oneDrive: k = .oneDrive(account: accountId)
         default: k = .localFolder
         }
         let m: DestinationMode
@@ -282,12 +335,35 @@ struct DestinationEditor: View {
         return nil
     }
 
+    /// A factory that uses the typed-but-unsaved secret for this destination and the Keychain for cloud accounts.
+    private func factory(_ d: Destination) -> DefaultStorageFactory {
+        let typed = MemorySecrets(secretForUse.map { [SecretAccount.destination(d.id): $0] } ?? [:])
+        return DefaultStorageFactory(secrets: LayeredSecrets(first: typed, second: model.secrets), accounts: model.accountStore)
+    }
+
+    private func makeFolder() async {
+        makingFolder = true; testResult = nil
+        let d = build()
+        do {
+            let storage = try await factory(d).storage(for: d)
+            switch storage {
+            case let s as S3Storage: try await s.makeRootFolder()
+            case let s as GoogleDriveStorage: try await s.makeRootFolder()
+            case let s as DropboxStorage: try await s.makeRootFolder()
+            case let s as OneDriveStorage: try await s.makeRootFolder()
+            default: break
+            }
+            try await storage.checkReachable()
+            testResult = (true, "The folder is there: \(storage.describe)")
+        } catch let e as DSError { testResult = (false, e.message) } catch { testResult = (false, error.localizedDescription) }
+        makingFolder = false
+    }
+
     private func test() async {
         testing = true; testResult = nil
         let d = build()
-        let secrets = MemorySecrets(secretForUse.map { [SecretAccount.destination(d.id): $0] } ?? [:])
         do {
-            let storage = try await DefaultStorageFactory(secrets: secrets).storage(for: d)
+            let storage = try await factory(d).storage(for: d)
             try await storage.checkReachable()
             let free = (try? await storage.freeSpace()).flatMap { $0 }.map { " · \(Formatting.bytes($0)) free" } ?? ""
             testResult = (true, "Connected: \(storage.describe)\(free)")
@@ -300,7 +376,7 @@ struct DestinationEditor: View {
         let d = build()
         let account = SecretAccount.destination(d.id)
         do {
-            let keep = kind == .network || (kind == .sftp && auth != .terminal)
+            let keep = kind == .network || (kind == .sftp && auth != .terminal)   // cloud secrets live with the account, not the destination
             if !secret.isEmpty && keep { try model.secrets.set(secret, for: account) }
             else if !keep || (hadSecret && kind == .sftp && auth == .terminal) { try model.secrets.remove(for: account) }
         } catch { model.notice = Notice(title: "The sign-in could not be saved", message: error.localizedDescription) }

@@ -8,6 +8,7 @@ struct AccountsPane: View {
     @State private var ssh: SSHOverview?
     @State private var saved: [(account: String, label: String)] = []
     @State private var loadError: String?
+    @State private var adding: CloudProvider?
 
     var body: some View {
         Form {
@@ -73,20 +74,50 @@ struct AccountsPane: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Section {
-                Text("Cloud services").fontWeight(.semibold)
-                Text("Google Drive, Dropbox, OneDrive and Amazon S3 sign-ins arrive with those destination kinds in the next step and are listed here too.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                HStack {
+                    Text("Cloud accounts").fontWeight(.semibold)
+                    Spacer()
+                    Menu("Add account…") {
+                        ForEach(CloudProvider.allCases, id: \.self) { p in Button(p.label) { adding = p } }
+                    }.frame(width: 140)
+                }
+                if model.cloudAccounts.isEmpty {
+                    Text("None yet. Google Drive, Dropbox, OneDrive and Amazon S3 accounts are added here or when you add a destination of that kind; one account can serve many destinations.")
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                }
+                ForEach(model.cloudAccounts) { a in
+                    HStack {
+                        Image(systemName: a.provider == .s3 ? "shippingbox" : "cloud").frame(width: 20)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("\(a.provider.label) — \(a.label)")
+                            Text(uses(a)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Sign out") { model.remove(a) }.font(.system(size: 12))
+                            .help("Forgets the account and its tokens; destinations that use it will ask for an account")
+                    }
+                }
             }
         }
         .formStyle(.grouped)
-        .task { await load() }
+        .task {
+            await load()
+            // development only: DATASYNCER_AUTOSHEET=settings:accounts:<provider> opens the add-account sheet
+            if let p = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").dropFirst(2).first.flatMap({ CloudProvider(rawValue: String($0)) }) { adding = p }
+        }
+        .sheet(item: $adding) { p in CloudAccountSheet(provider: p) { _ in } }
+    }
+
+    private func uses(_ a: CloudAccount) -> String {
+        let n = model.jobs.flatMap(\.destinations).filter { $0.kind.cloudAccount == a.id.uuidString }.count
+        return n == 0 ? "not used by any destination yet" : "used by \(n) destination\(n == 1 ? "" : "s")"
     }
 
     private func load() async {
         ssh = await SSHInfo.overview()
         do {
             let accounts = try model.secrets.accounts()
-            saved = accounts.map { a in
+            saved = accounts.filter { SecretAccount.cloudId($0) == nil }.map { a in
                 if let id = SecretAccount.destinationId(a) {
                     for job in model.jobs { if let d = job.destinations.first(where: { $0.id == id }) { return (a, "\(d.name) — \(d.kind.label) (job “\(job.name)”)") } }
                     return (a, "a destination that no longer exists")

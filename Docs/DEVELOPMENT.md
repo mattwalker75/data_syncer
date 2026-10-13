@@ -19,6 +19,7 @@ No Xcode project: `Package.swift` is the whole build. Opening the folder in Xcod
 | --- | --- |
 | `Helpers.swift` | `Scratch` (a throwaway folder removed afterwards), `makeTree` / `readTree`, a `FixedClock` so backup folder names are predictable, `localJob` |
 | `PlannerTests.swift` | folder names and titles (round trip), sync plans (first run, unchanged, changed source, tampered copy, the 2-second tolerance, extras deleted deepest first only when asked), backup plans (full, incremental with deletions) |
+| `CloudTests.swift` | `FakeHTTP` (a URLProtocol answering from memory) and `FakeBucket` (enough S3 for the engines): SigV4 against Amazon's published example, list parsing and URL encoding, a full sync + backup + restore + delete through S3 (multipart included), folder-missing and bad-key messages; token refresh and save-back, refresh failure wording, Google Drive / Dropbox / OneDrive listing, stat, missing-folder messages, the 401 retry; accounts and secrets round trip, PKCE |
 | `SSHTests.swift` | parsing (GNU/BSD find output, ssh config, keys, share matching, error wording, secrets) and **real round trips against a private sshd** the test starts itself (`TestSSHServer`: `/usr/sbin/sshd` on a random high port with its own host and client keys, `StrictModes no`; skipped if it can't start): storage basics, a sync + incremental backup + restore over SSH, a wrong key's message |
 | `RunnerTests.swift` (BackupDeletionTests) | which backups depend on which; deleting a backup from the app strands only its dependents; the restore's free-space check |
 | `RunnerTests.swift` (HistoryAndPreviewTests) | a declined sync preview leaves the destination alone and reports it as skipped; the history keeps the newest first, capped, and "last result" ignores skipped runs |
@@ -39,6 +40,13 @@ Settings tab, `DATASYNCER_AUTORESTORE="<job name>"` opens Restore… for it (or
 `"<job name>|<destination name>|<folder>"` restores the newest backup there straight away), and
 `DATASYNCER_WINDOW=100,100,1120,760` puts the window at that place on the main display (handy for
 `screencapture -l <window id>`). All are for development only and do nothing when unset. The jobs file format is plain JSON (`JobsFile`), so a test home can be written by hand.
+
+## What has not been tried against the real services
+
+The cloud code is written against the services' documented APIs and tested against fakes. Nothing
+here has talked to a real Google, Dropbox, Microsoft or Amazon account yet. Expect the first real
+sign-in and the first real run to each service to need a look (query details, consent screens,
+redirect-URI registration). The SSH code *has* been run for real, against a private sshd.
 
 ## Conventions
 

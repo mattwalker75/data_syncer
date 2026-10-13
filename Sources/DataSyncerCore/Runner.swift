@@ -90,13 +90,50 @@ public protocol StorageFactory: Sendable {
     func storage(for destination: Destination) async throws -> Storage
 }
 
-/// Local folders, USB drives, network shares and SSH servers. Step 5 adds the cloud kinds.
+/// Every kind of destination: local folders, USB drives, network shares, SSH servers and the cloud services.
 public struct DefaultStorageFactory: StorageFactory {
     public let secrets: SecretStore
-    public init(secrets: SecretStore = KeychainSecrets()) { self.secrets = secrets }
+    public let accounts: CloudAccountStore
+    public init(secrets: SecretStore = KeychainSecrets(), accounts: CloudAccountStore = CloudAccountStore()) { self.secrets = secrets; self.accounts = accounts }
+
+    /// The cloud account and its secret, with plain messages when either is gone.
+    func cloud(_ id: String, _ provider: CloudProvider) throws -> (CloudAccount, CloudSecret) {
+        guard let account = try accounts.account(id), account.provider == provider else {
+            throw DSError("The \(provider.label) account this destination used is no longer in Data Syncer. Edit the destination and pick (or add) an account.")
+        }
+        guard let secret = try CloudSecret.load(account.id, from: secrets) else {
+            throw DSError("The sign-in for \(provider.label) (\(account.label)) is missing from the Keychain. Sign in again in Settings → Accounts.")
+        }
+        return (account, secret)
+    }
+
+    /// Tokens that refresh themselves and save back to the Keychain.
+    func tokenProvider(_ account: CloudAccount, _ secret: CloudSecret) throws -> TokenProvider {
+        guard let tokens = secret.tokens, let config = account.provider.oauthConfig(clientId: account.clientId, clientSecret: secret.clientSecret) else {
+            throw DSError("\(account.provider.label) (\(account.label)) isn't signed in. Sign in again in Settings → Accounts.")
+        }
+        let secrets = self.secrets, id = account.id
+        return TokenProvider(config: config, tokens: tokens) { fresh in
+            var s = secret; s.tokens = fresh
+            try? s.save(id, to: secrets)
+        }
+    }
 
     public func storage(for d: Destination) async throws -> Storage {
         switch d.kind {
+        case .s3(let accountId, let bucket, let region, let endpoint):
+            let (account, secret) = try cloud(accountId, .s3)
+            guard let key = secret.s3SecretKey else { throw DSError("The secret key for Amazon S3 (\(account.label)) is missing from the Keychain. Add the account again in Settings → Accounts.") }
+            return S3Storage(options: S3Options(bucket: bucket, region: region, endpoint: endpoint, accessKey: account.clientId, secretKey: key), folder: d.folder)
+        case .googleDrive(let accountId):
+            let (account, secret) = try cloud(accountId, .googleDrive)
+            return GoogleDriveStorage(tokens: try tokenProvider(account, secret), folder: d.folder, accountLabel: account.label)
+        case .dropbox(let accountId):
+            let (account, secret) = try cloud(accountId, .dropbox)
+            return DropboxStorage(tokens: try tokenProvider(account, secret), folder: d.folder, accountLabel: account.label)
+        case .oneDrive(let accountId):
+            let (account, secret) = try cloud(accountId, .oneDrive)
+            return OneDriveStorage(tokens: try tokenProvider(account, secret), folder: d.folder, accountLabel: account.label)
         case .networkShare(let urlString):
             guard let url = URL(string: urlString), url.host != nil else { throw DSError("The share address “\(urlString)” isn't a valid address. It should look like smb://server/share.") }
             let mount: URL
@@ -125,8 +162,6 @@ public struct DefaultStorageFactory: StorageFactory {
             let folder = d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             let root = folder.isEmpty ? mount : mount.appendingPathComponent(folder, isDirectory: true)
             return LocalStorage(root: root, describe: "\(d.kind.label), /\(folder)")
-        default:
-            throw DSError("\(d.kind.label) destinations are not built yet.")
         }
     }
 }
@@ -293,42 +328,40 @@ public final class JobRunner: @unchecked Sendable {
         result.unchanged = plan.unchanged
         var progress = RunProgress(filesTotal: plan.copy.count, bytesTotal: plan.bytes)
         try await storage.makeDirectory(folder)
-        var ok = false
-        defer {
-            // a backup that did not finish is not a backup: its folder goes, so it is never mistaken for one
-            if !ok { Task { try? await storage.remove(folder) } }
-        }
-        for dir in plan.makeDirs {
-            try Task.checkCancellation()
-            try await storage.makeDirectory(joinPath(folder, dir))
-        }
-        var copied: [RelPath] = []
-        for file in plan.copy {
-            try Task.checkCancellation()
-            progress.currentPath = file.path
-            onEvent(.progress(d.id, progress))
-            let action = await copyOne(file, from: job.sourceURL, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
-            onEvent(.file(d.id, file.path, action))
-            switch action {
-            case .copied, .linked: result.copied += 1; copied.append(file.path)
-            case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)")
-            case .failed(let why): result.problems.append("\(file.path): \(why)")
-            default: break
+        // a backup that did not finish is not a backup: its folder goes (before the run reports), so it is never mistaken for one
+        do {
+            for dir in plan.makeDirs {
+                try Task.checkCancellation()
+                try await storage.makeDirectory(joinPath(folder, dir))
             }
-            progress.filesDone += 1
-            if !file.meta.isSymlink { progress.bytesDone += file.meta.size }
+            var copied: [RelPath] = []
+            for file in plan.copy {
+                try Task.checkCancellation()
+                progress.currentPath = file.path
+                onEvent(.progress(d.id, progress))
+                let action = await copyOne(file, from: job.sourceURL, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
+                onEvent(.file(d.id, file.path, action))
+                switch action {
+                case .copied, .linked: result.copied += 1; copied.append(file.path)
+                case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)")
+                case .failed(let why): result.problems.append("\(file.path): \(why)")
+                default: break
+                }
+                progress.filesDone += 1
+                if !file.meta.isSymlink { progress.bytesDone += file.meta.size }
+            }
+            progress.currentPath = ""
+            onEvent(.progress(d.id, progress))
+            let manifest = Manifest(kind: kind, createdAt: now(), jobName: job.name, title: title, basedOn: parent?.folder,
+                                    snapshot: plan.snapshot, copied: copied, deleted: plan.deleted,
+                                    fileCount: copied.count, totalBytes: plan.bytes)
+            try await Records.saveManifest(manifest, of: folder, to: storage)
+            result.deleted = plan.deleted.count
+            result.bytes = plan.bytes
+        } catch {
+            try? await storage.remove(folder)
+            throw error
         }
-        progress.currentPath = ""
-        onEvent(.progress(d.id, progress))
-        let manifest = Manifest(kind: kind, createdAt: now(), jobName: job.name, title: title, basedOn: parent?.folder,
-                                snapshot: plan.snapshot, copied: copied, deleted: plan.deleted,
-                                fileCount: copied.count, totalBytes: plan.bytes)
-        try await Records.saveManifest(manifest, of: folder, to: storage)
-        result.deleted = plan.deleted.count
-        result.bytes = plan.bytes
-        ok = true
-        _ = folder
-        folder = ""
     }
 
     // MARK: one file
