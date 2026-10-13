@@ -6,6 +6,7 @@ import DataSyncerCore
 
 struct MainWindow: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Group {
@@ -36,6 +37,9 @@ struct MainWindow: View {
 
     /// development only: DATASYNCER_WINDOW=x,y,w,h puts the window there (screen coordinates, origin top-left)
     private func placeWindowForDevelopment() {
+        if ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.hasPrefix("settings") == true {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { openSettings() }
+        }
         guard let spec = ProcessInfo.processInfo.environment["DATASYNCER_WINDOW"] else { return }
         let n = spec.split(separator: ",").compactMap { Double($0) }
         guard n.count == 4, let screen = NSScreen.screens.first, let window = NSApp.windows.first(where: { $0.title == "Data Syncer" }) ?? NSApp.windows.first else { return }

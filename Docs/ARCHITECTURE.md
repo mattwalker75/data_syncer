@@ -22,6 +22,11 @@ Sources/DataSyncerCore/
   Preflight.swift   "Check destinations"
   JobStore.swift    jobs.json in ~/Library/Application Support/Data Syncer/
   RunHistory.swift  runs.json: every run's report, newest first, capped
+  Secrets.swift     SecretStore: KeychainSecrets (the app) / MemorySecrets (tests); one secret per destination id
+  Shell.swift       running ssh & co: collect output, feed a file on stdin with progress, drain stdout to a file
+  SSHStorage.swift  SSHClient (the ssh command line, ControlMaster, askpass, error wording) and SSHStorage
+  SSHInfo.swift     read-only view of ~/.ssh: keys, config hosts, agent, known_hosts
+  NetworkShare.swift  is smb://host/share mounted (getmntinfo)? if not, mount it (NetFS) → LocalStorage
 Sources/DataSyncer/
   DataSyncerApp.swift  the scenes: the main window, the Settings window, the menu commands
   AppModel.swift       the one object the views watch: jobs, history, settings, the run in progress
@@ -48,8 +53,18 @@ USB drive and a sync to S3 run the same code. Paths are relative to the destinat
 folder. `walk()` lists everything under a folder, leaving out the `.datasyncer` records at the root.
 
 `StorageFactory` turns a `Destination` into a `Storage`; `DefaultStorageFactory` covers local
-folders and USB drives (found by name under `/Volumes`). Network shares, SFTP and the cloud
-services add their own `Storage` in later steps.
+folders, USB drives (found by name under `/Volumes`), network shares (used where Finder mounted
+them, else mounted with NetFS and the Keychain password → `LocalStorage`) and SSH servers
+(`SSHStorage`). It takes a `SecretStore`; secrets are looked up by destination id.
+
+**SSH** uses the Mac's own `/usr/bin/ssh` (owner decision: built-in tools, `~/.ssh` as Terminal
+uses it). One master connection per server (`ControlMaster`, a socket under `/tmp/datasyncer-ssh-<uid>`)
+and every operation is a short remote command: `find -printf` (GNU) or `find -exec stat -f` (BSD)
+for listing — one command for a whole tree —, `cat >` fed from stdin for uploads (with `chmod` and
+`TZ=UTC touch -t` to keep permissions and dates), `cat` drained to a file for downloads, `df -Pk`
+for free space. A password or key passphrase reaches ssh through `SSH_ASKPASS` (a tiny script that
+prints `$DATASYNCER_SSH_SECRET`); without one, `BatchMode=yes` so nothing ever waits for a prompt.
+`StrictHostKeyChecking=accept-new` records a new server in known_hosts and refuses a changed one.
 
 ## What a run does
 

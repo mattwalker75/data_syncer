@@ -20,11 +20,25 @@ on its own: open the app, pick a job, press **Run…**.
 **New job** asks for a name and the source folder. Then **+ Add destination** on the job's page:
 
 - **Name** — what you'll call it ("Backup drive", "Second copy").
-- **Where** — a folder on this Mac (which includes drives and shares that are already connected,
-  and iCloud Drive), or a **USB drive** by name: the drive is found under its name whenever you run,
-  so it can be plugged into any port. The folder inside it must already exist — Data Syncer never
-  creates a destination folder. Network shares, SSH, S3, Google Drive, Dropbox and OneDrive arrive
-  in later steps.
+- **Where** —
+  - a **folder on this Mac** (which includes drives and shares that are already connected) or a
+    folder in **iCloud Drive**;
+  - a **USB drive** by name: the drive is found under its name whenever you run, so it can be
+    plugged into any port;
+  - a **network share** (`smb://server/share`, or `afp://` for older Macs) with a folder inside it.
+    If the share is already connected in Finder it is used as it is; otherwise Data Syncer connects
+    it when you run, with the user name and password you give (the password goes in your Keychain).
+    Leave the user name empty for a guest share;
+  - an **SSH server (SFTP)**: server, port, user name and the folder on the server (absolute, or
+    relative to the user's home). Sign in *like Terminal* (whatever `ssh` would use: keys in
+    ssh-agent, `~/.ssh/config`, the default keys), with *a key file* (pick one of the keys in
+    `~/.ssh`, with its passphrase if it has one), or with *a password*. "From ~/.ssh/config" fills
+    the fields from a config entry. Settings → Accounts shows what this Mac has. The first time a
+    server is used its identity is remembered in `~/.ssh/known_hosts`, as Terminal would;
+  - Amazon S3, Google Drive, Dropbox and OneDrive: the next step.
+
+  Every folder must already exist — Data Syncer never creates a destination folder.
+  **Test connection** tries the share or server with what you've typed, without copying anything.
 - **Mode** — *Sync* (the destination is made to match the source; a switch decides whether files the
   source no longer has are deleted from the copy), *Full only* (every run makes a new dated folder
   with a complete copy), or *Full + incremental* (dated full and incremental backups; you choose
@@ -85,7 +99,9 @@ deleting. It never deletes a backup on its own.
   be read).
 - **Appearance** — Light, Dark, or follow the system. Accent colours and your own themes come in a
   later step.
-- **Accounts** — cloud and server sign-ins (later step).
+- **Accounts** — what this Mac has for SSH (the keys in `~/.ssh`, what ssh-agent has loaded, the
+  hosts in `~/.ssh/config`, how many servers `known_hosts` remembers — read only, with a button to
+  open the folder), and the sign-ins Data Syncer keeps in your Keychain, each with **Forget**.
 - **Notifications** — the notification when a run finishes.
 - **Run history** — every run, newest first; **Clear history…** forgets them (nothing at any
   destination is touched).

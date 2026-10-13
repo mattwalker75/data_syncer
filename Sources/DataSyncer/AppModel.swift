@@ -57,6 +57,8 @@ final class AppModel: ObservableObject {
 
     let store = JobStore()
     let historyStore = RunHistory()
+    /// passwords, passphrases and tokens: the Keychain
+    let secrets: SecretStore = KeychainSecrets()
     private var runTask: Task<Void, Never>?
     private var sleepActivity: NSObjectProtocol?
 
@@ -68,6 +70,20 @@ final class AppModel: ObservableObject {
         if let name = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSTART"], let job = jobs.first(where: { $0.name == name }) {
             selectedJobId = job.id
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start(job, choices: [:]) }
+        }
+        // development only: DATASYNCER_AUTOSHEET=newJob|newDestination|check|run|settings opens that for the first job
+        if let what = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                let job = self.selectedJob
+                switch what {
+                case "newJob": self.sheet = .newJob
+                case "newDestination": if let job { self.sheet = .newDestination(job) }
+                case "check": if let job { self.sheet = .check(job) }
+                case "run": if let job { self.sheet = .runOptions(job) }
+                default: break
+                }
+            }
         }
         // development only: DATASYNCER_AUTORESTORE="<job name>" opens Restore… for that job;
         // "<job name>|<destination name>|<folder>" restores the newest backup there straight away
@@ -116,6 +132,7 @@ final class AppModel: ObservableObject {
     }
 
     func delete(_ job: Job) {
+        for d in job.destinations { try? secrets.remove(for: SecretAccount.destination(d.id)) }
         jobs.removeAll { $0.id == job.id }
         if selectedJobId == job.id { selectedJobId = jobs.first?.id }
         sourceStats.removeValue(forKey: job.id)
@@ -130,6 +147,7 @@ final class AppModel: ObservableObject {
     }
 
     func remove(_ destination: Destination, from job: Job) {
+        try? secrets.remove(for: SecretAccount.destination(destination.id))
         var job = job
         job.destinations.removeAll { $0.id == destination.id }
         update(job)

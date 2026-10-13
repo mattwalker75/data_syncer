@@ -19,6 +19,7 @@ No Xcode project: `Package.swift` is the whole build. Opening the folder in Xcod
 | --- | --- |
 | `Helpers.swift` | `Scratch` (a throwaway folder removed afterwards), `makeTree` / `readTree`, a `FixedClock` so backup folder names are predictable, `localJob` |
 | `PlannerTests.swift` | folder names and titles (round trip), sync plans (first run, unchanged, changed source, tampered copy, the 2-second tolerance, extras deleted deepest first only when asked), backup plans (full, incremental with deletions) |
+| `SSHTests.swift` | parsing (GNU/BSD find output, ssh config, keys, share matching, error wording, secrets) and **real round trips against a private sshd** the test starts itself (`TestSSHServer`: `/usr/sbin/sshd` on a random high port with its own host and client keys, `StrictModes no`; skipped if it can't start): storage basics, a sync + incremental backup + restore over SSH, a wrong key's message |
 | `RunnerTests.swift` (BackupDeletionTests) | which backups depend on which; deleting a backup from the app strands only its dependents; the restore's free-space check |
 | `RunnerTests.swift` (HistoryAndPreviewTests) | a declined sync preview leaves the destination alone and reports it as skipped; the history keeps the newest first, capped, and "last result" ignores skipped runs |
 | `RunnerTests.swift` | real runs: a sync mirrors the source with records, dates and permissions kept and links made; deleting is per destination; a tampered copy is put right; a missing destination folder fails that destination and the run carries on; a USB drive that isn't connected; full + incremental chains, the per-chain limit, "since the last full", full-only folders, same-minute refusal, cancel leaves no half folder; restore with and without removing deleted files, a deleted full breaks only what depends on it; the pre-run checks; jobs save and load |
@@ -33,7 +34,8 @@ DATASYNCER_HOME=/tmp/ds-home "build/Data Syncer.app/Contents/MacOS/Data Syncer"
 
 `DATASYNCER_HOME` points the jobs, history and settings files at another folder. Two more hooks exist
 for looking at screens: `DATASYNCER_AUTOSTART="<job name>"` runs that job as soon as the window is
-up, `DATASYNCER_AUTORESTORE="<job name>"` opens Restore… for it (or
+up, `DATASYNCER_AUTOSHEET=newJob|newDestination|check|run|settings[:tab]` opens that sheet or
+Settings tab, `DATASYNCER_AUTORESTORE="<job name>"` opens Restore… for it (or
 `"<job name>|<destination name>|<folder>"` restores the newest backup there straight away), and
 `DATASYNCER_WINDOW=100,100,1120,760` puts the window at that place on the main display (handy for
 `screencapture -l <window id>`). All are for development only and do nothing when unset. The jobs file format is plain JSON (`JobsFile`), so a test home can be written by hand.

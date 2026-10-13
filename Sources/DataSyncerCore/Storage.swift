@@ -36,12 +36,16 @@ public protocol Storage: AnyObject, Sendable {
     func makeSymlink(_ path: RelPath, target: String) async throws
     /// Modified dates this storage can keep exactly (false: cloud services that round or replace them).
     var keepsModifiedDates: Bool { get }
+    /// Every file and folder under `dir`, recursively, by relative path. The `.datasyncer` records folder at the
+    /// root is left out — it is Data Syncer's, not the user's data. The default lists folder by folder; a
+    /// storage that can do it in one request (SSH, cloud) overrides it.
+    func walk(_ dir: RelPath) async throws -> Snapshot
 }
 
 public extension Storage {
-    /// Every file and folder under `dir`, recursively, by relative path. The `.datasyncer` records folder at the
-    /// root is left out — it is Data Syncer's, not the user's data.
-    func walk(_ dir: RelPath = "") async throws -> Snapshot {
+    func walk() async throws -> Snapshot { try await walk("") }
+
+    func walk(_ dir: RelPath) async throws -> Snapshot {
         var out: Snapshot = [:]
         var queue: [RelPath] = [dir]
         while let current = queue.first {
@@ -209,7 +213,7 @@ public final class LocalStorage: Storage, @unchecked Sendable {
     }
 
     /// Modified date and permissions, as the source had them.
-    static func apply(_ meta: FileMeta, to url: URL) throws {
+    public static func apply(_ meta: FileMeta, to url: URL) throws {
         var attrs: [FileAttributeKey: Any] = [.modificationDate: Date(timeIntervalSince1970: meta.modified)]
         if let p = meta.permissions { attrs[.posixPermissions] = Int(p) }
         try? FileManager.default.setAttributes(attrs, ofItemAtPath: url.path)

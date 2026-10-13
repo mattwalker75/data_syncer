@@ -17,6 +17,7 @@ The person using it is not a developer — every message is a plain sentence.
   - `Planner.swift` — pure planning: what a sync or backup will do, before anything is copied.
   - `Runner.swift` — `JobRunner`: checks → plan → copy, one destination after another, with events and cancellation; `StorageFactory`.
   - `Restore.swift`, `Preflight.swift` (Check destinations), `JobStore.swift` (jobs.json in Application Support), `RunHistory.swift` (runs.json).
+  - `Secrets.swift` (Keychain, one secret per destination id), `Shell.swift` + `SSHStorage.swift` + `SSHInfo.swift` (SSH through `/usr/bin/ssh`), `NetworkShare.swift` (mounted shares, NetFS).
 - `Sources/DataSyncer/` — the SwiftUI app. Thin: `AppModel` drives the core and `RunSession` shows its events; views never touch disks (`Docs/ARCHITECTURE.md` lists the files).
 - `Tests/DataSyncerCoreTests/` — XCTest against throwaway folders (`Scratch`), a fixed clock for folder names.
 - `BUILD_APP.sh` assembles the .app (+ `icon/DataSyncer.icns`, ad-hoc signed); `INSTALL_APP.sh` checks tools, tests, builds, copies to /Applications.
@@ -32,7 +33,8 @@ The person using it is not a developer — every message is a plain sentence.
 8. **Restore rebuilds the chain**: the full, then each incremental up to the chosen point, into a folder the user picks; `removeDeleted` decides whether files recorded as deleted are removed or left. Whole-backup restores only (partial restores later).
 9. **Incrementals:** `chainStart` is `lastIncremental` (increments of increments) or `lastFull`; `maxIncrementals` per chain, after which the next backup must be a full. An incremental that is not allowed is refused with the reason when asked for explicitly, and becomes a full when the choice was left open.
 10. **Cancelling** stops mid-file; a backup that did not finish is removed so it is never mistaken for one. A sync saves its record on the way out.
-11. **Cloud services through their own APIs** (Google Drive, Dropbox, OneDrive, S3): no desktop apps; each gets an in-app step-by-step setup guide. Secrets go in the Keychain, never in jobs.json. (Steps 4–5.)
+11. **Cloud services through their own APIs** (Google Drive, Dropbox, OneDrive, S3): no desktop apps; each gets an in-app step-by-step setup guide. Secrets go in the Keychain, never in jobs.json, under `SecretAccount.destination(id)`; a destination's secret is removed with it.
+11b. **SSH through the Mac's own `ssh`** (owner decision, Oct 13 2026): no SSH library; `~/.ssh` keys, config, known_hosts and the agent work as in Terminal, and Settings → Accounts shows them (read only). Passwords/passphrases go through `SSH_ASKPASS`; never let ssh wait on a prompt (`BatchMode=yes` when there is no secret). Remote commands must work on GNU *and* BSD servers (`serverFlavour`). Tests run against a private sshd the suite starts (`TestSSHServer`).
 12. **Scripts**: `-x`/`--long` options + `-h`; idempotent; plain-spoken. **Commits:** one per feature with a dated CHANGELOG entry; explicit `git add <paths>`; never push — Matt pushes.
 13. **Testing:** `swift test`; every engine rule has a test against throwaway folders; never touch the user's real folders or Application Support in tests (`Scratch` + `JobStore(url:)`).
 14. **Sync preview** is the runner's `confirmSync` hook; the UI answers it with a sheet. Progress events are throttled in `RunSession`, not in the core. Dev hooks `DATASYNCER_HOME` / `DATASYNCER_AUTOSTART` / `DATASYNCER_AUTORESTORE` / `DATASYNCER_WINDOW` exist for trying screens without real data — keep them harmless when unset.

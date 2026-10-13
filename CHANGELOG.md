@@ -5,6 +5,16 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 ## [Unreleased]
 
 ### Added
+- 2026-10-13: **Step 4 — network shares and SSH.** Network share destinations (`smb://` / `afp://`):
+  used where Finder already mounted them, otherwise connected by the app with the Keychain password
+  (NetFS, no window). SSH (SFTP) destinations through the Mac's own `ssh`: sign in like Terminal
+  (agent, ~/.ssh/config, default keys), with a chosen key file (+ passphrase) or a password; one
+  shared connection per server; listing in one remote `find`; uploads keep dates and permissions;
+  plain-English messages for refused sign-ins, unknown hosts, changed host keys. Destination editor
+  forms for both with "Test connection" and "From ~/.ssh/config". Settings → Accounts: keys in ~/.ssh,
+  ssh-agent, config hosts, known_hosts count, and the sign-ins kept in the Keychain (Forget). Core:
+  `SecretStore` (Keychain / memory), `Shell`, `SSHClient`/`SSHStorage`, `SSHInfo`, `NetworkShare`,
+  `Storage.walk` overridable. 38 tests, including real round trips against a private sshd.
 - 2026-10-13: **Step 3 — restore.** Restore… (toolbar, Job menu): pick one of the job's backup
   destinations, see its backups (kind, date, files, size, what each incremental is measured since,
   unreadable records flagged), choose the restore point, the folder to restore into and whether files

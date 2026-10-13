@@ -90,11 +90,29 @@ public protocol StorageFactory: Sendable {
     func storage(for destination: Destination) async throws -> Storage
 }
 
-/// Local folders and USB drives. Later steps add the network and cloud kinds.
+/// Local folders, USB drives, network shares and SSH servers. Step 5 adds the cloud kinds.
 public struct DefaultStorageFactory: StorageFactory {
-    public init() {}
+    public let secrets: SecretStore
+    public init(secrets: SecretStore = KeychainSecrets()) { self.secrets = secrets }
+
     public func storage(for d: Destination) async throws -> Storage {
         switch d.kind {
+        case .networkShare(let urlString):
+            guard let url = URL(string: urlString), url.host != nil else { throw DSError("The share address “\(urlString)” isn't a valid address. It should look like smb://server/share.") }
+            let mount: URL
+            if let m = NetworkShare.mountPoint(for: url) {
+                mount = m
+            } else {
+                let password = try secrets.secret(for: SecretAccount.destination(d.id))
+                let bare = url.user == nil ? url : { var c = URLComponents(url: url, resolvingAgainstBaseURL: false)!; c.user = nil; c.password = nil; return c.url! }()
+                mount = try NetworkShare.mount(bare, user: url.user?.removingPercentEncoding, password: password)
+            }
+            let folder = d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let root = folder.isEmpty ? mount : mount.appendingPathComponent(folder, isDirectory: true)
+            return LocalStorage(root: root, describe: "the share \(url.host ?? "")/\(url.lastPathComponent)" + (folder.isEmpty ? "" : ", /\(folder)"))
+        case .sftp(let host, let port, let user, let keyPath):
+            let secret = try secrets.secret(for: SecretAccount.destination(d.id))
+            return SSHStorage(options: SSHOptions(host: host, port: port, user: user, keyPath: keyPath, secret: secret), root: d.folder)
         case .localFolder:
             let url = URL(fileURLWithPath: (d.folder as NSString).expandingTildeInPath, isDirectory: true)
             return LocalStorage(root: url, describe: "the folder \(url.path)")

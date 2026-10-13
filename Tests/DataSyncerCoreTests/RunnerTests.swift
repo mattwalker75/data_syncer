@@ -403,10 +403,3 @@ final class BackupDeletionTests: XCTestCase {
         XCTAssertEqual(readTree(target), ["a.txt": "A"])
     }
 }
-
-/// A tiny lock for collecting events from a @Sendable closure in tests.
-final class Locked<T>: @unchecked Sendable {
-    private var value: T; private let lock = NSLock()
-    init(_ v: T) { value = v }
-    func with<R>(_ f: (inout T) -> R) -> R { lock.lock(); defer { lock.unlock() }; return f(&value) }
-}

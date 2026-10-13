@@ -5,16 +5,18 @@ import DataSyncerCore
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
+    // development only: DATASYNCER_AUTOSHEET=settings:<tab> opens on that tab
+    @State private var tab = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").last.map(String.init) ?? "general"
 
     var body: some View {
-        TabView {
-            general.tabItem { Label("General", systemImage: "gearshape") }
-            appearance.tabItem { Label("Appearance", systemImage: "paintpalette") }
-            accounts.tabItem { Label("Accounts", systemImage: "person.crop.circle") }
-            notifications.tabItem { Label("Notifications", systemImage: "bell") }
-            history.tabItem { Label("Run history", systemImage: "clock") }
+        TabView(selection: $tab) {
+            general.tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+            appearance.tabItem { Label("Appearance", systemImage: "paintpalette") }.tag("appearance")
+            accounts.tabItem { Label("Accounts", systemImage: "person.crop.circle") }.tag("accounts")
+            notifications.tabItem { Label("Notifications", systemImage: "bell") }.tag("notifications")
+            history.tabItem { Label("Run history", systemImage: "clock") }.tag("history")
         }
-        .frame(width: 620, height: 440)
+        .frame(width: 640, height: 560)
     }
 
     private var general: some View {
@@ -50,15 +52,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    private var accounts: some View {
-        Form {
-            Section("Cloud and server accounts") {
-                Text("Google Drive, Dropbox, OneDrive, Amazon S3 and SSH sign-ins are kept here, in your Mac's Keychain. They arrive with those destination kinds in a later step.")
-                    .foregroundStyle(.secondary).font(.system(size: 12.5))
-            }
-        }
-        .formStyle(.grouped)
-    }
+    private var accounts: some View { AccountsPane() }
 
     private var notifications: some View {
         Form {
