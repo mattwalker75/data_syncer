@@ -11,6 +11,8 @@ struct RunOptionsSheet: View {
     let job: Job
     enum Choice: String, CaseIterable, Identifiable { case auto = "Let Data Syncer choose", full = "Full", incremental = "Incremental"; var id: String { rawValue } }
     @State private var choices: [Destination.ID: Choice] = [:]
+    /// what the destination's chain allows right now ("an incremental is possible (3 of 10)…"), looked up on open
+    @State private var chainNotes: [Destination.ID: (ok: Bool, text: String)] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -24,7 +26,10 @@ struct RunOptionsSheet: View {
                             Image(systemName: Formatting.icon(d.kind)).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(i + 1) · \(d.name)").fontWeight(.semibold)
-                                Text(d.enabled ? what(d) : "off — skipped this run").font(.system(size: 12)).foregroundStyle(.secondary)
+                                Text(d.enabled ? what(d) : "off — skipped this run").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                                if let n = chainNotes[d.id] {
+                                    HStack(alignment: .firstTextBaseline, spacing: 5) { Dot(color: n.ok ? Theme.good : Theme.attention, size: 6); Text(n.text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3) }
+                                }
                             }
                             Spacer()
                             if d.enabled, case .fullIncremental = d.mode {
@@ -46,6 +51,18 @@ struct RunOptionsSheet: View {
         }
         .padding(20)
         .frame(width: 600)
+        .task { await lookUpChains() }
+    }
+
+    /// Asks each Full + incremental destination what its chain allows, so "Incremental" isn't refused only at run time.
+    private func lookUpChains() async {
+        for d in job.destinations where d.enabled {
+            guard case .fullIncremental = d.mode else { continue }
+            let check = await Preflight.check(job, d, factory: DefaultStorageFactory(accounts: model.accountStore), otherJobIds: model.otherJobIds(job))
+            guard check.items.first?.ok == true else { continue }
+            chainNotes[d.id] = (check.canIncremental, check.canIncremental ? check.incrementalNote : check.incrementalNote + " The next backup will be a full one.")
+            if !check.canIncremental, choices[d.id] == nil { choices[d.id] = .full }
+        }
     }
 
     private func what(_ d: Destination) -> String {
@@ -81,7 +98,6 @@ struct RunScreen: View {
                 rightColumn
             }
         }
-        .sheet(item: $model.preview) { SyncPreviewSheet(request: $0) }
     }
 
     private var titleBar: some View {
@@ -187,7 +203,7 @@ struct RunScreen: View {
                 }
                 HStack(spacing: 12) {
                     tile("Copied", d.copied)
-                    tile("Unchanged", d.result?.unchanged ?? planUnchanged(d))
+                    tile("Unchanged", d.result?.unchanged ?? d.planUnchanged)
                     tile(isSync(d) ? "Deleted" : "Deleted since", d.result?.deleted ?? d.deleted)
                     tile("Problems", d.failed + d.skipped)
                 }
@@ -266,12 +282,6 @@ struct RunScreen: View {
 
     private func isSync(_ d: DestinationRun) -> Bool { if case .sync = d.destination.mode { return true }; return false }
 
-    private func planUnchanged(_ d: DestinationRun) -> Int {
-        // "copy 212, delete 3 · 12,268 unchanged" → 12268, until the result arrives
-        guard let r = d.plan.range(of: #"(\d[\d,]*) unchanged"#, options: .regularExpression) else { return 0 }
-        return Int(d.plan[r].split(separator: " ")[0].replacingOccurrences(of: ",", with: "")) ?? 0
-    }
-
     private func headline(_ d: DestinationRun?) -> String {
         guard let d else { return session.isRunning ? "Getting ready…" : "Finished" }
         let verb = isSync(d) ? "Syncing to" : "Backing up to"
@@ -317,12 +327,20 @@ struct SyncPreviewSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sync to \(request.destination.name)").font(.title2).fontWeight(.bold)
             Text(plan.summary.prefix(1).uppercased() + plan.summary.dropFirst()).fontWeight(.medium)
-            if plan.copy.isEmpty && plan.delete.isEmpty && plan.makeDirs.isEmpty {
+            if let warning = plan.warning {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.attention)
+                    Text(warning).fontWeight(.medium)
+                }
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if plan.copy.isEmpty && plan.delete.isEmpty && plan.makeDirs.isEmpty && plan.replace.isEmpty {
                 Text("Nothing needs copying or deleting — the destination already matches the source.").foregroundStyle(.secondary)
             } else {
                 HStack(alignment: .top, spacing: 16) {
                     column("Copy · \(Formatting.count(plan.copy.count)) · \(Formatting.bytes(plan.bytes))", plan.copy.map(\.path), Theme.good)
-                    column("Delete at the destination · \(Formatting.count(plan.delete.count))", plan.delete, Theme.problem)
+                    column("Delete at the destination · \(Formatting.count(plan.delete.count + plan.replace.count))", plan.replace + plan.delete, Theme.problem)
                 }
                 .frame(height: 300)
             }
@@ -332,8 +350,8 @@ struct SyncPreviewSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Skip this destination") { request.answer(false) }.keyboardShortcut(.cancelAction)
-                Button("Go ahead") { request.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                Button("Skip this destination") { request.answer(false) }
+                Button(plan.warning == nil ? "Go ahead" : "Go ahead anyway") { request.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             }
         }
         .padding(20)

@@ -5,6 +5,7 @@ import DataSyncerCore
 
 struct JobDetailView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.openSettings) private var openSettings
     let job: Job
     @State private var destinationToDelete: Destination?
 
@@ -19,8 +20,8 @@ struct JobDetailView: View {
             .padding(.horizontal, 28).padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onAppear { model.countSource(of: job) }
-        .onChange(of: job.sourcePath) { _, _ in model.countSource(of: job, force: true) }
+        // counted once per job (and again when its source changes); .task(id:) fires for every selected job
+        .task(id: "\(job.id)|\(job.sourcePath)") { model.countSource(of: job) }
         .confirmationDialog("Remove the destination “\(destinationToDelete?.name ?? "")” from this job?", isPresented: Binding(get: { destinationToDelete != nil }, set: { if !$0 { destinationToDelete = nil } }), titleVisibility: .visible) {
             Button("Remove destination", role: .destructive) { if let d = destinationToDelete { model.remove(d, from: job) }; destinationToDelete = nil }
             Button("Cancel", role: .cancel) { destinationToDelete = nil }
@@ -34,10 +35,10 @@ struct JobDetailView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(job.name).font(.system(size: 24, weight: .bold))
-                Button("Edit…") { model.sheet = .editJob(job) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
+                Button("Rename…") { model.sheet = .editJob(job) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
             }
             HStack(spacing: 8) { Dot(color: last.color); Text(last.text) }.foregroundStyle(.primary)
-            if model.isRunning, model.session?.isRunning != true || model.session?.job.id != job.id {
+            if model.isRunning, !model.isRunning(job) {
                 Text("Run… and Restore… are unavailable until \(model.runningName) finishes. You can still look around, edit a job or check destinations.")
                     .font(.system(size: 12.5)).foregroundStyle(.secondary)
             }
@@ -50,10 +51,12 @@ struct JobDetailView: View {
                 Image(systemName: "folder").font(.system(size: 24)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     SectionLabel("Source")
-                    Text(job.sourcePath).font(.system(size: 14, weight: .semibold, design: .monospaced)).textSelection(.enabled)
+                    Text(Formatting.shortPath(job.sourcePath)).font(.system(size: 14, weight: .semibold, design: .monospaced)).textSelection(.enabled).help(job.sourcePath)
                 }
                 Spacer()
                 sourceStats
+                Button { NSWorkspace.shared.activateFileViewerSelecting([job.sourceURL]) } label: { Image(systemName: "folder") }
+                    .help("Show in Finder").accessibilityLabel("Show the source in Finder")
                 Button("Change…") { pickSource() }
             }
         }
@@ -81,18 +84,26 @@ struct JobDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 SectionLabel("Destinations · \(job.destinations.count)")
+                if job.destinations.count > 1 { Text("they run in this order").font(.system(size: 11.5)).foregroundStyle(.secondary) }
                 Spacer()
                 Button { model.sheet = .newDestination(job) } label: { Label("Add destination", systemImage: "plus") }
                     .buttonStyle(.link).foregroundStyle(Theme.accent)
             }
             if job.destinations.isEmpty {
-                Card { Text("No destinations yet. Add a folder on this Mac or a USB drive to copy to.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
+                Card { Text("No destinations yet. Add a folder on this Mac, a USB drive, a share, a server or a cloud service to copy to.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }
             }
-            ForEach(job.destinations) { d in
+            ForEach(Array(job.destinations.enumerated()), id: \.element.id) { i, d in
                 DestinationRow(job: job, destination: d, last: model.history.lastResult(for: d.id))
                     .contextMenu {
                         Button("Edit…") { model.sheet = .editDestination(job, d) }
                         Button(d.enabled ? "Turn off" : "Turn on") { model.setEnabled(!d.enabled, d, in: job) }
+                        Divider()
+                        Button("Move up") { model.move(d, in: job, by: -1) }.disabled(i == 0)
+                        Button("Move down") { model.move(d, in: job, by: 1) }.disabled(i == job.destinations.count - 1)
+                        if let url = Formatting.localURL(of: d) {
+                            Divider()
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                        }
                         Divider()
                         Button("Remove…", role: .destructive) { destinationToDelete = d }
                     }
@@ -102,14 +113,22 @@ struct JobDetailView: View {
     }
 
     private var recentRuns: some View {
-        let runs = model.history.filter { $0.jobId == job.id }.prefix(8)
+        let all = model.history.filter { $0.jobId == job.id }
+        let runs = all.prefix(8)
         return VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Recent runs")
+            HStack {
+                SectionLabel("Recent runs")
+                Spacer()
+                if all.count > runs.count {
+                    Button("See all \(all.count) runs") { model.settingsTab = "history"; openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
+                }
+            }
             if runs.isEmpty {
                 Text("This job hasn't run yet.").foregroundStyle(.secondary).font(.system(size: 12.5))
             } else {
+                Text("Click a run to see what happened.").font(.system(size: 11.5)).foregroundStyle(.secondary)
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 0) {
-                    ForEach(Array(runs.enumerated()), id: \.element.startedAt) { i, run in
+                    ForEach(Array(runs.enumerated()), id: \.element.id) { i, run in
                         let o = Formatting.outcome(run)
                         GridRow {
                             Text(Formatting.When(run.startedAt)).gridColumnAlignment(.leading)
@@ -119,7 +138,10 @@ struct JobDetailView: View {
                         }
                         .font(.system(size: 12.5))
                         .padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.sheet = .runDetails(run) }
                         .help(Formatting.summary(of: run))
+                        .accessibilityAddTraits(.isButton)
                         if i < runs.count - 1 { Divider() }
                     }
                 }
@@ -142,8 +164,11 @@ struct DestinationRow: View {
             HStack(spacing: 14) {
                 Image(systemName: Formatting.icon(d.kind)).font(.system(size: 20)).frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(d.name).fontWeight(.semibold)
-                    Text(Formatting.place(d)).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    HStack(spacing: 8) {
+                        Text(d.name).fontWeight(.semibold)
+                        Button("Edit…") { model.sheet = .editDestination(job, d) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 11.5))
+                    }
+                    Text(Formatting.place(d) + (model.accountLabel(d.kind).map { " · \($0)" } ?? "")).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 3) {
@@ -160,6 +185,7 @@ struct DestinationRow: View {
                 Toggle("", isOn: Binding(get: { d.enabled }, set: { model.setEnabled($0, d, in: job) }))
                     .toggleStyle(.switch).labelsHidden().controlSize(.small)
                     .help(d.enabled ? "On — this destination runs with the job" : "Off — skipped until you turn it on again")
+                    .accessibilityLabel("\(d.name) runs with the job")
             }
         }
         .opacity(d.enabled ? 1 : 0.6)

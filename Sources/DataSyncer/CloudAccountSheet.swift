@@ -17,6 +17,7 @@ struct CloudAccountSheet: View {
     @State private var label = ""
     @State private var working = false
     @State private var status: (ok: Bool, text: String)?
+    @State private var task: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -36,13 +37,15 @@ struct CloudAccountSheet: View {
                     HStack(spacing: 8) { ProgressView().controlSize(.small); Text(provider == .s3 ? "Checking the keys…" : "Waiting for the sign-in in your browser…").font(.system(size: 12)).foregroundStyle(.secondary) }
                 }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(provider == .s3 ? "Add account" : "Sign in with \(provider.label)…") { Task { await go() } }
+                Button("Cancel") { task?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                Button(provider == .s3 ? "Add account" : "Sign in with \(provider.label)…") { task = Task { await go() } }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(working || !valid)
             }
         }
         .padding(20)
         .frame(width: 680, height: 620)
+        // closing the sheet stops a sign-in that is still waiting for the browser (and frees the port at once)
+        .onDisappear { task?.cancel() }
     }
 
     private var valid: Bool {
@@ -170,13 +173,14 @@ struct CloudAccountSheet: View {
                 case .s3: break
                 }
             }
+            guard !Task.isCancelled else { return }
             try secret.save(account.id, to: model.secrets)
             model.add(account)
-            status = (true, "Signed in as \(account.label).")
             working = false
             onAdded(account)
             dismiss()
-        } catch let e as DSError { status = (false, e.message) } catch { status = (false, error.localizedDescription) }
+        } catch is CancellationError { return }
+        catch let e as DSError { status = (false, e.message) } catch { status = (false, error.localizedDescription) }
         working = false
     }
 }

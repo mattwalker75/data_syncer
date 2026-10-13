@@ -52,15 +52,23 @@ final class RestoreSession: ObservableObject, Identifiable {
 
     func finish(_ r: RestoreResult) { result = r; progress.currentPath = "" }
 
-    var outcome: (text: String, color: Color) {
-        guard let r = result else { return ("Restoring", Theme.accent) }
+    struct Outcome { var text: String; var color: Color; var sentence: String }
+    var outcome: Outcome {
+        guard let r = result else { return Outcome(text: "Restoring", color: Theme.accent, sentence: "is going") }
         switch r.status {
-        case .finished: return ("Finished", Theme.good)
-        case .finishedWithProblems: return ("\(r.problems.count) problem\(r.problems.count == 1 ? "" : "s")", Theme.attention)
-        case .cancelled: return ("Cancelled", Theme.attention)
-        case .failed: return ("Failed", Theme.problem)
-        case .skipped: return ("Skipped", .secondary)
+        case .finished: return Outcome(text: "Finished", color: Theme.good, sentence: "finished")
+        case .finishedWithProblems:
+            let n = r.problems.count
+            return Outcome(text: "\(n) problem\(n == 1 ? "" : "s")", color: Theme.attention, sentence: "finished with \(n) problem\(n == 1 ? "" : "s")")
+        case .cancelled: return Outcome(text: "Cancelled", color: Theme.attention, sentence: "was cancelled")
+        case .failed: return Outcome(text: "Failed", color: Theme.problem, sentence: "failed")
+        case .skipped: return Outcome(text: "Skipped", color: .secondary, sentence: "was skipped")
         }
+    }
+    /// did the backup being applied when the restore stopped get through?
+    var currentApplied: Bool {
+        guard let r = result else { return false }
+        return r.status == .finished || r.status == .finishedWithProblems
     }
 }
 
@@ -105,7 +113,7 @@ struct RestoreScreen: View {
                         ForEach(Array(p.chain.enumerated()), id: \.offset) { i, folder in
                             let state: (String, Color) = {
                                 guard let a = session.applying else { return ("Waiting", .secondary) }
-                                if i + 1 < a.index || (!session.isRunning && i + 1 <= a.index && session.result?.status != .cancelled) { return ("Applied", Theme.good) }
+                                if i + 1 < a.index || (!session.isRunning && i + 1 == a.index && session.currentApplied) { return ("Applied", Theme.good) }
                                 if i + 1 == a.index { return (session.isRunning ? "Applying" : session.outcome.text, session.isRunning ? Theme.accent : session.outcome.color) }
                                 return ("Waiting", .secondary)
                             }()
@@ -134,7 +142,7 @@ struct RestoreScreen: View {
     private var right: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(session.isRunning ? "Restoring into \(session.target.lastPathComponent)" : "Restore \(session.outcome.text.lowercased())").font(.system(size: 20, weight: .bold))
+                Text(session.isRunning ? "Restoring into \(session.target.lastPathComponent)" : "Restore \(session.outcome.sentence)").font(.system(size: 20, weight: .bold))
                 Text(session.plan?.summary ?? "Checking the destination and the folder to restore into.").foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 10) {

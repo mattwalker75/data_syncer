@@ -3,6 +3,7 @@ import SwiftUI
 import DataSyncerCore
 
 struct CheckSheet: View {
+    @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let job: Job
     @State private var source: CheckItem?
@@ -68,7 +69,7 @@ struct CheckSheet: View {
     private func check() async {
         source = Preflight.checkSource(job)
         for d in job.destinations where d.enabled {
-            let r = await Preflight.check(job, d)
+            let r = await Preflight.check(job, d, factory: DefaultStorageFactory(accounts: model.accountStore), otherJobIds: model.otherJobIds(job))
             results[d.id] = r
         }
         running = false

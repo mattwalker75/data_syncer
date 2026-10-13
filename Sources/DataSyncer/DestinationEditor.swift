@@ -1,6 +1,6 @@
 // The sheet that makes or changes a destination: where (a folder here, iCloud Drive, a USB drive by name, a
-// network share, an SSH server — the cloud services arrive in step 5), how (the mode and its options), and
-// the sign-in, which goes to the Keychain. "Test connection" tries the destination without copying anything.
+// network share, an SSH server, S3, Google Drive, Dropbox, OneDrive), how (the mode and its options), and the
+// sign-in, which goes to the Keychain. "Test connection" tries the destination without copying anything.
 import SwiftUI
 import DataSyncerCore
 
@@ -53,8 +53,10 @@ struct DestinationEditor: View {
     @State private var makingFolder = false
     // the sign-in (share password, SSH password or key passphrase)
     @State private var secret = ""
-    @State private var secretLoaded = false
     @State private var hadSecret = false
+    /// the sign-in method the saved secret belongs to (a password is not a passphrase)
+    @State private var loadedAuth: SSHAuth = .terminal
+    @State private var problem: Notice?
     // how
     @State private var mode: ModeChoice = .sync
     @State private var deleteExtras = true
@@ -75,7 +77,16 @@ struct DestinationEditor: View {
                     Picker("Where", selection: $kind) {
                         ForEach(KindChoice.allCases) { k in Text(k.rawValue).tag(k) }
                     }
-                    .onChange(of: kind) { _, k in if !k.available { kind = .folder }; testResult = nil }
+                    .onChange(of: kind) { _, k in
+                        testResult = nil
+                        // a cloud kind starts with its first account, if there is one
+                        if let p = k.provider, !model.cloudAccounts.contains(where: { $0.id.uuidString == accountId && $0.provider == p }) {
+                            accountId = model.cloudAccounts.first { $0.provider == p }?.id.uuidString ?? ""
+                        }
+                    }
+                    .onChange(of: model.cloudAccounts) { _, accounts in
+                        if accountId.isEmpty, let p = kind.provider { accountId = accounts.first { $0.provider == p }?.id.uuidString ?? "" }
+                    }
                     whereFields
                 }
                 Section("How") {
@@ -129,7 +140,11 @@ struct DestinationEditor: View {
         .sheet(item: $addingAccount) { p in
             CloudAccountSheet(provider: p) { account in accountId = account.id.uuidString }
         }
+        .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
     }
+
+    /// is the saved secret the right kind for the sign-in method chosen now?
+    private var savedSecretApplies: Bool { hadSecret && (kind == .network || (kind == .sftp && auth == loadedAuth && auth != .terminal)) }
 
     // MARK: where
 
@@ -137,11 +152,9 @@ struct DestinationEditor: View {
         switch kind {
         case .usb:
             Picker("Drive", selection: $volume) {
-                if volumes.isEmpty { Text("No drives connected").tag("") }
-                else {
-                    if !volume.isEmpty, !volumes.contains(volume) { Text("\(volume) (not connected)").tag(volume) }
-                    ForEach(volumes, id: \.self) { Text($0).tag($0) }
-                }
+                if !volume.isEmpty, !volumes.contains(volume) { Text("\(volume) (not connected right now)").tag(volume) }
+                if volumes.isEmpty && volume.isEmpty { Text("No drives connected").tag("") }
+                ForEach(volumes, id: \.self) { Text($0).tag($0) }
             }
             HStack {
                 TextField("Folder on the drive", text: $folder, prompt: Text("backup/Work documents")).font(.system(.body, design: .monospaced))
@@ -149,11 +162,11 @@ struct DestinationEditor: View {
                     let mount = URL(fileURLWithPath: "/Volumes/\(volume)")
                     if let url = FolderPicker.choose(title: "Choose the folder on the drive", message: "The folder on “\(volume)” that holds this destination's copies. It must already exist.", start: mount) {
                         if url.path.hasPrefix(mount.path) { folder = String(url.path.dropFirst(mount.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
-                        else { model.notice = Notice(title: "Not on that drive", message: "Choose a folder on “\(volume)”.") }
+                        else { problem = Notice(title: "Not on that drive", message: "Choose a folder on “\(volume)”.") }
                     }
                 }.disabled(volume.isEmpty)
             }
-            note("The drive is found by its name whenever you run, so it can be plugged into any port. The folder must already exist — Data Syncer never creates it.")
+            note("The drive is found by its name whenever you run, so it can be plugged into any port. The folder on it must already exist — Data Syncer never creates it, and never uses a whole drive as a destination.")
         case .iCloud, .folder:
             HStack {
                 TextField(kind == .iCloud ? "Folder in iCloud Drive" : "Folder", text: $folder, prompt: Text("/Volumes/Backup/Work")).font(.system(.body, design: .monospaced))
@@ -169,7 +182,7 @@ struct DestinationEditor: View {
             TextField("Share address", text: $shareAddress, prompt: Text("smb://nas.local/backups")).font(.system(.body, design: .monospaced))
             TextField("Folder in the share", text: $folder, prompt: Text("Work documents (leave empty for the share itself)")).font(.system(.body, design: .monospaced))
             TextField("User name", text: $shareUser, prompt: Text("leave empty for a guest share"))
-            SecureField("Password", text: $secret, prompt: Text(hadSecret ? "(saved — type to replace)" : "kept in your Keychain"))
+            SecureField("Password", text: $secret, prompt: Text(savedSecretApplies ? "(saved — type to replace)" : "kept in your Keychain"))
             note("If the share is already connected in Finder it is used as it is. Otherwise Data Syncer connects it with this sign-in when you run (smb:// for Windows, NAS and Mac shares; afp:// for older Macs). The folder must already exist.")
         case .sftp:
             HStack {
@@ -205,10 +218,10 @@ struct DestinationEditor: View {
                         if p.runModal() == .OK, let u = p.url { keyPath = u.path }
                     }
                 }
-                SecureField("Key passphrase", text: $secret, prompt: Text(hadSecret ? "(saved — type to replace)" : "leave empty if the key has none"))
+                SecureField("Key passphrase", text: $secret, prompt: Text(savedSecretApplies ? "(saved — type to replace)" : "leave empty if the key has none"))
             case .password:
-                SecureField("Password", text: $secret, prompt: Text(hadSecret ? "(saved — type to replace)" : "kept in your Keychain"))
-                note("Passwords work when the server allows them; a key is safer and never asks again.")
+                SecureField("Password", text: $secret, prompt: Text(savedSecretApplies ? "(saved — type to replace)" : "kept in your Keychain"))
+                note("Passwords work when the server allows them; a key is safer and never asks again. The first time a server is used, its identity is remembered in ~/.ssh/known_hosts without asking.")
             }
         case .s3:
             accountPicker(.s3)
@@ -258,10 +271,10 @@ struct DestinationEditor: View {
     private var valid: Bool {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         switch kind {
-        case .usb: return !volume.isEmpty
+        case .usb: return !volume.isEmpty && !folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).isEmpty
         case .network: return URL(string: shareAddress.trimmingCharacters(in: .whitespaces))?.host != nil
         case .sftp: return !host.trimmingCharacters(in: .whitespaces).isEmpty && Int(port) != nil && !user.trimmingCharacters(in: .whitespaces).isEmpty && !folder.trimmingCharacters(in: .whitespaces).isEmpty && (auth != .key || !keyPath.isEmpty)
-        case .s3: return !accountId.isEmpty && !bucket.trimmingCharacters(in: .whitespaces).isEmpty && !region.trimmingCharacters(in: .whitespaces).isEmpty
+        case .s3: return !accountId.isEmpty && !region.trimmingCharacters(in: .whitespaces).isEmpty && S3Storage.validate(bucket: bucket.trimmingCharacters(in: .whitespaces), endpoint: endpoint) == nil
         case .googleDrive, .dropbox, .oneDrive: return !accountId.isEmpty && !folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).isEmpty
         default: return !folder.trimmingCharacters(in: .whitespaces).isEmpty
         }
@@ -274,8 +287,6 @@ struct DestinationEditor: View {
         sshKeys = SSHInfo.keys(in: SSHInfo.sshDir)
         configHosts = SSHInfo.configHosts(at: SSHInfo.sshDir.appendingPathComponent("config"))
         guard let d = destination else { volume = volumes.first ?? ""; keyPath = sshKeys.first?.path ?? ""; return }
-        // a new destination: the first account of the kind, if any
-        if accountId.isEmpty, let p = kind.provider { accountId = model.cloudAccounts.first { $0.provider == p }?.id.uuidString ?? "" }
         name = d.name; folder = d.folder; enabled = d.enabled; backupTitle = d.backupTitle
         hadSecret = (try? model.secrets.secret(for: SecretAccount.destination(d.id))) != nil
         switch d.kind {
@@ -287,6 +298,7 @@ struct DestinationEditor: View {
         case .sftp(let h, let p, let u, let k):
             kind = .sftp; host = h; port = String(p); user = u
             if let k { auth = .key; keyPath = k } else { auth = hadSecret ? .password : .terminal }
+            loadedAuth = auth
         case .s3(let a, let b, let r, let e): kind = .s3; accountId = a; bucket = b; region = r; endpoint = e ?? ""
         case .googleDrive(let a): kind = .googleDrive; accountId = a
         case .dropbox(let a): kind = .dropbox; accountId = a
@@ -328,10 +340,10 @@ struct DestinationEditor: View {
                            folder: folder.trimmingCharacters(in: .whitespaces), mode: m, enabled: enabled, backupTitle: backupTitle)
     }
 
-    /// The secret to use: what was typed, else what is saved (when still relevant).
+    /// The secret to use: what was typed, else what is saved (when it is the right kind for the method chosen).
     private var secretForUse: String? {
         if !secret.isEmpty { return secret }
-        if hadSecret, let d = destination, kind != .folder, auth != .terminal || kind == .network { return try? model.secrets.secret(for: SecretAccount.destination(d.id)) }
+        if savedSecretApplies, let d = destination { return try? model.secrets.secret(for: SecretAccount.destination(d.id)) }
         return nil
     }
 
@@ -378,8 +390,8 @@ struct DestinationEditor: View {
         do {
             let keep = kind == .network || (kind == .sftp && auth != .terminal)   // cloud secrets live with the account, not the destination
             if !secret.isEmpty && keep { try model.secrets.set(secret, for: account) }
-            else if !keep || (hadSecret && kind == .sftp && auth == .terminal) { try model.secrets.remove(for: account) }
-        } catch { model.notice = Notice(title: "The sign-in could not be saved", message: error.localizedDescription) }
+            else if !keep || !savedSecretApplies { try model.secrets.remove(for: account) }   // a password is not a passphrase: a stale one goes
+        } catch { problem = Notice(title: "The sign-in could not be saved", message: error.localizedDescription); return }
         model.upsert(d, in: job)
         dismiss()
     }

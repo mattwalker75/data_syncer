@@ -19,12 +19,14 @@ struct DataSyncerApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Job…") { model.newJob() }.keyboardShortcut("n")
+                Button("Duplicate Job") { if let j = model.selectedJob { model.duplicate(j) } }.keyboardShortcut("d").disabled(model.selectedJob == nil)
             }
             CommandMenu("Job") {
                 Button("Run…") { model.askToRun() }.keyboardShortcut("r").disabled(!model.canRun)
                 Button("Check Destinations") { model.checkDestinations() }.keyboardShortcut("k").disabled(model.selectedJob == nil)
                 Button("Restore…") { model.askToRestore() }.disabled(model.selectedJob == nil || model.isRunning)
                 Divider()
+                Button("Show Last Run") { model.watchRun() }.keyboardShortcut("l").disabled(!model.hasLastRun)
                 Button("Cancel Run or Restore") { model.cancelRun() }.keyboardShortcut(".").disabled(!model.isRunning)
             }
         }

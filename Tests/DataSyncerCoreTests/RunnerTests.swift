@@ -25,7 +25,7 @@ final class SyncRunTests: XCTestCase {
         let state = try await Records.loadSyncState(from: LocalStorage(root: dst))
         XCTAssertEqual(state?.files.count, 3)
         // the plan was announced before copying
-        XCTAssertTrue(events.contains { if case .planned(_, let s) = $0 { return s.contains("copy 3") } else { return false } })
+        XCTAssertTrue(events.contains { if case .planned(_, let s, let u) = $0 { return s.contains("copy 3") && u == 0 } else { return false } })
 
         // a second run has nothing to do
         let again = await JobRunner().run(job) { _ in }

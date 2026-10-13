@@ -47,7 +47,7 @@ enum Formatting {
     /// The location under a destination's name: the folder, the drive and folder, the share…
     static func place(_ d: Destination) -> String {
         switch d.kind {
-        case .localFolder: return d.folder
+        case .localFolder: return shortPath(d.folder)
         case .usbDrive: return "/" + d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         case .networkShare(let url): return url + (d.folder.isEmpty ? "" : "/" + d.folder)
         case .sftp(let host, _, _, _): return host + ":" + d.folder
@@ -70,7 +70,7 @@ enum Formatting {
             case .sync: text = "Synced \(when) · \(count(r.copied)) copied" + (r.deleted > 0 ? ", \(count(r.deleted)) deleted" : "")
             default:
                 let kind = (r.backupFolder.flatMap { BackupNaming.parse($0)?.kind } ?? .full) == .full ? "Full" : "Incremental"
-                text = "\(kind) \(when) · \(count(r.copied)) files · \(bytes(r.bytes))"
+                text = "\(kind) \(when) · \(count(r.copied)) file\(r.copied == 1 ? "" : "s") · \(bytes(r.bytes))"
             }
             if r.status == .finishedWithProblems { text += " · \(r.problems.count) problem\(r.problems.count == 1 ? "" : "s")" }
             return (text, r.status == .finished ? Theme.good : Theme.attention)
@@ -94,14 +94,45 @@ enum Formatting {
         return ("\(when) — \(bad) of \(ran.count) destination\(ran.count == 1 ? "" : "s") had problems · \(took)", Theme.problem)
     }
 
+    struct Outcome { var text: String; var color: Color; var needsAttention: Bool }
+
     /// For a run's row in a table and the notification: "Finished", "1 problem", "Failed"
-    static func outcome(_ report: RunReport) -> (text: String, color: Color) {
+    static func outcome(_ report: RunReport) -> Outcome {
         let ran = report.results.filter { if case .skipped = $0.status { return false }; return true }
-        if ran.isEmpty { return ("Nothing ran", .secondary) }
-        if ran.allSatisfy({ $0.status == .finished }) { return ("Finished", Theme.good) }
-        if ran.contains(where: { $0.status == .cancelled }) { return ("Cancelled", Theme.attention) }
+        if ran.isEmpty { return Outcome(text: "Nothing ran", color: .secondary, needsAttention: false) }
+        if ran.allSatisfy({ $0.status == .finished }) { return Outcome(text: "Finished", color: Theme.good, needsAttention: false) }
+        if ran.contains(where: { $0.status == .cancelled }) { return Outcome(text: "Cancelled", color: Theme.attention, needsAttention: false) }
         let problems = ran.reduce(0) { $0 + max($1.problems.count, $1.status == .finished ? 0 : 1) }
-        return ("\(problems) problem\(problems == 1 ? "" : "s")", ran.contains { if case .failed = $0.status { return true }; return false } ? Theme.problem : Theme.attention)
+        let failed = ran.contains { if case .failed = $0.status { return true }; return false }
+        return Outcome(text: "\(problems) problem\(problems == 1 ? "" : "s")", color: failed ? Theme.problem : Theme.attention, needsAttention: true)
+    }
+
+    /// "~/Documents/Work" and "iCloud Drive/Work" instead of the long real paths.
+    static func shortPath(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let icloud = home + "/Library/Mobile Documents/com~apple~CloudDocs"
+        if path == icloud { return "iCloud Drive" }
+        if path.hasPrefix(icloud + "/") { return "iCloud Drive/" + path.dropFirst(icloud.count + 1) }
+        if path == home { return "~" }
+        if path.hasPrefix(home + "/") { return "~/" + path.dropFirst(home.count + 1) }
+        return path
+    }
+
+    /// Where a destination is on this Mac right now (a folder, a connected drive, a mounted share); nil otherwise.
+    static func localURL(of d: Destination) -> URL? {
+        switch d.kind {
+        case .localFolder:
+            let u = URL(fileURLWithPath: (d.folder as NSString).expandingTildeInPath, isDirectory: true)
+            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        case .usbDrive(let v):
+            let u = URL(fileURLWithPath: "/Volumes/\(v)", isDirectory: true).appendingPathComponent(d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/")), isDirectory: true)
+            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        case .networkShare(let s):
+            guard let url = URL(string: s), let m = NetworkShare.mountPoint(for: url) else { return nil }
+            let u = m.appendingPathComponent(d.folder.trimmingCharacters(in: CharacterSet(charactersIn: "/")), isDirectory: true)
+            return FileManager.default.fileExists(atPath: u.path) ? u : nil
+        default: return nil
+        }
     }
 
     /// The notification's body: one line per destination.

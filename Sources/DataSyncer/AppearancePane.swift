@@ -6,6 +6,8 @@ struct AppearancePane: View {
     @EnvironmentObject var model: AppModel
     @State private var editing: CustomTheme?
     @State private var customAccent = Color.blue
+    @State private var loaded = false
+    @State private var themeToDelete: CustomTheme?
 
     var body: some View {
         Form {
@@ -32,8 +34,13 @@ struct AppearancePane: View {
                         .buttonStyle(.plain).help(a.label)
                     }
                     ColorPicker("", selection: $customAccent, supportsOpacity: false).labelsHidden()
-                        .onChange(of: customAccent) { _, c in model.settings.accent = ThemeColor(c) }
-                        .help("Any other colour")
+                        .onChange(of: customAccent) { _, c in
+                            // only a change the user made (not the value loaded on open) is saved
+                            guard loaded else { return }
+                            let t = ThemeColor(c)
+                            if t != model.settings.accent { model.settings.accent = t }
+                        }
+                        .help("Any other colour").accessibilityLabel("A colour of your own")
                 }
                 .disabled(model.settings.activeTheme != nil)
                 Text(model.settings.activeTheme != nil
@@ -69,7 +76,7 @@ struct AppearancePane: View {
                         Spacer()
                         if !active { Button("Use") { model.settings.activeThemeId = t.id } }
                         Button("Edit…") { editing = t }
-                        Button { delete(t) } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Delete this theme")
+                        Button { themeToDelete = t } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Delete this theme").accessibilityLabel("Delete the theme \(t.name)")
                     }
                 }
                 Text("A theme sets the look, the accent, the good / attention / problem colours, and tints for the sidebar and cards. Changes preview live while you adjust them.")
@@ -77,8 +84,12 @@ struct AppearancePane: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { customAccent = model.settings.accent.color }
+        .onAppear { customAccent = model.settings.accent.color; DispatchQueue.main.async { loaded = true } }
         .sheet(item: $editing) { t in ThemeEditor(theme: t) }
+        .confirmationDialog("Delete the theme “\(themeToDelete?.name ?? "")”?", isPresented: Binding(get: { themeToDelete != nil }, set: { if !$0 { themeToDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete theme", role: .destructive) { if let t = themeToDelete { delete(t) }; themeToDelete = nil }
+            Button("Cancel", role: .cancel) { themeToDelete = nil }
+        }
     }
 
     private var accentName: String {
@@ -104,7 +115,7 @@ struct ThemeEditor: View {
     @State private var sidebar: Color = .gray
     @State private var tintCards = false
     @State private var cards: Color = .gray
-    @State private var before: AppSettings?
+    @State private var saved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -130,7 +141,7 @@ struct ThemeEditor: View {
             HStack {
                 Text("The main window shows the theme while you adjust it.").font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
-                Button("Cancel") { if let b = before { model.settings = b }; dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save and use") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
                     .disabled(theme.name.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -138,7 +149,6 @@ struct ThemeEditor: View {
         .padding(20)
         .frame(width: 560, height: 620)
         .onAppear {
-            before = model.settings
             accent = theme.accent.color; good = theme.good.color; attention = theme.attention.color; problem = theme.problem.color
             tintSidebar = theme.sidebarTint != nil; sidebar = theme.sidebarTint?.color ?? Color(nsColor: .systemIndigo)
             tintCards = theme.cardTint != nil; cards = theme.cardTint?.color ?? Color(nsColor: .systemIndigo)
@@ -146,6 +156,8 @@ struct ThemeEditor: View {
         .onChange(of: accent) { _, _ in live() }.onChange(of: good) { _, _ in live() }.onChange(of: attention) { _, _ in live() }
         .onChange(of: problem) { _, _ in live() }.onChange(of: tintSidebar) { _, _ in live() }.onChange(of: sidebar) { _, _ in live() }
         .onChange(of: tintCards) { _, _ in live() }.onChange(of: cards) { _, _ in live() }.onChange(of: theme.look) { _, _ in live() }
+        // closing the sheet any other way (⌘W, quitting) puts the saved settings back
+        .onDisappear { if !saved { Theme.apply(model.settings); model.objectWillChange.send() } }
     }
 
     private var preview: some View {
@@ -168,17 +180,24 @@ struct ThemeEditor: View {
         return t
     }
 
-    /// Shows the theme in the main window as it is being adjusted (undone by Cancel).
-    private func live() {
+    /// The settings as they would be with this theme saved and in use.
+    private var previewSettings: AppSettings {
         var s = model.settings
         let t = built
         if let i = s.themes.firstIndex(where: { $0.id == t.id }) { s.themes[i] = t } else { s.themes.append(t) }
         s.activeThemeId = t.id
-        model.settings = s
+        return s
+    }
+
+    /// Shows the theme in the windows as it is being adjusted, without saving anything (Cancel just closes).
+    private func live() {
+        Theme.apply(previewSettings)
+        model.objectWillChange.send()
     }
 
     private func save() {
-        live()
+        saved = true
+        model.settings = previewSettings
         dismiss()
     }
 }

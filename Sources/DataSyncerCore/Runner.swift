@@ -27,8 +27,8 @@ public enum RunEvent: Sendable {
     case destinationStarted(Destination.ID, String)
     /// a check before copying: what was checked, whether it passed, and the detail
     case check(Destination.ID, name: String, ok: Bool, detail: String)
-    /// the plan, in words ("copy 212, delete 3 · 12,268 unchanged")
-    case planned(Destination.ID, summary: String)
+    /// the plan, in words ("copy 212, delete 3 · 12,268 unchanged"), and the unchanged count on its own
+    case planned(Destination.ID, summary: String, unchanged: Int)
     case progress(Destination.ID, RunProgress)
     case file(Destination.ID, RelPath, FileAction)
     case destinationFinished(DestinationResult)
@@ -69,7 +69,9 @@ public struct DestinationResult: Codable, Equatable, Sendable {
     public var duration: TimeInterval { finishedAt.timeIntervalSince(startedAt) }
 }
 
-public struct RunReport: Codable, Equatable, Sendable {
+public struct RunReport: Equatable, Sendable, Identifiable {
+    /// its own id (two runs can start in the same instant)
+    public var id = UUID()
     public var jobId: Job.ID
     public var jobName: String
     public var startedAt: Date
@@ -80,6 +82,19 @@ public struct RunReport: Codable, Equatable, Sendable {
             if case .skipped = r.status { return true }
             return r.status == .finished
         }
+    }
+}
+
+extension RunReport: Codable {
+    enum CodingKeys: String, CodingKey { case id, jobId, jobName, startedAt, finishedAt, results }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()   // runs saved before ids existed
+        jobId = try c.decode(UUID.self, forKey: .jobId)
+        jobName = try c.decode(String.self, forKey: .jobName)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        finishedAt = try c.decode(Date.self, forKey: .finishedAt)
+        results = try c.decode([DestinationResult].self, forKey: .results)
     }
 }
 
@@ -268,7 +283,7 @@ public final class JobRunner: @unchecked Sendable {
         catch let e as DSError { result.problems.append(e.message); state = SyncState() }
         let there = try await storage.walk()
         let plan = Planner.sync(source: src.snapshot, state: state, destination: there, deleteExtras: deleteExtras, unreadable: src.unreadable)
-        onEvent(.planned(d.id, summary: plan.summary))
+        onEvent(.planned(d.id, summary: plan.summary, unchanged: plan.unchanged))
         if let warning = plan.warning { onEvent(.check(d.id, name: "Looks wrong", ok: false, detail: warning)) }
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
         if let confirmSync {
@@ -355,7 +370,7 @@ public final class JobRunner: @unchecked Sendable {
             throw DSError("A backup folder named \(folder) is already there — a backup was made this same minute. Wait a minute and run again.")
         }
         let plan = Planner.backup(kind: kind, folderName: folder, source: src.snapshot, parent: parent?.manifest, unreadable: src.unreadable)
-        onEvent(.planned(d.id, summary: plan.summary))
+        onEvent(.planned(d.id, summary: plan.summary, unchanged: plan.unchanged))
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
         result.backupFolder = folder
         result.unchanged = plan.unchanged

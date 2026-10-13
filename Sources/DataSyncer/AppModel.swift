@@ -17,6 +17,7 @@ enum MainSheet: Identifiable {
     case check(Job)
     case runOptions(Job)
     case restore(Job)
+    case runDetails(RunReport)
     var id: String {
         switch self {
         case .newJob: return "newJob"
@@ -26,6 +27,7 @@ enum MainSheet: Identifiable {
         case .check(let j): return "check-\(j.id)"
         case .runOptions(let j): return "run-\(j.id)"
         case .restore(let j): return "restore-\(j.id)"
+        case .runDetails(let r): return "run-\(r.id)"
         }
     }
 }
@@ -46,14 +48,18 @@ final class AppModel: ObservableObject {
     @Published var sheet: MainSheet?
     @Published var notice: Notice?
     @Published var settings = AppSettings.load() { didSet { settings.save(); Theme.apply(settings) } }
-    /// the run in progress, or the last one until the user leaves the run screen
+    /// which Settings tab to show when the window opens next
+    @Published var settingsTab = "general"
+    /// the run in progress, or the last one until the user dismisses it
     @Published var session: RunSession?
-    /// the restore in progress, or the last one until the user leaves the restore screen
+    /// the restore in progress, or the last one until the user dismisses it
     @Published var restoreSession: RestoreSession?
     /// a sync preview waiting for the user's answer
     @Published var preview: SyncPreviewRequest?
     /// the source folder's size, per job, counted in the background
     @Published var sourceStats: [Job.ID: SourceStats] = [:]
+    /// what the system says about notifications ("allowed", "turned off in System Settings", …)
+    @Published var notificationStatus = ""
 
     let store = JobStore()
     let historyStore = RunHistory()
@@ -71,42 +77,8 @@ final class AppModel: ObservableObject {
         do { cloudAccounts = try accountStore.load() } catch let e as DSError { notice = Notice(title: "The accounts file could not be read", message: e.message) } catch {}
         selectedJobId = jobs.first?.id
         Theme.apply(settings)
-        // development only: DATASYNCER_AUTOSTART=<job name> runs that job as soon as the window is up
-        if let name = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSTART"], let job = jobs.first(where: { $0.name == name }) {
-            selectedJobId = job.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start(job, choices: [:]) }
-        }
-        // development only: DATASYNCER_AUTOSHEET=newJob|newDestination|check|run|settings opens that for the first job
-        if let what = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let self else { return }
-                let job = self.selectedJob
-                switch what {
-                case "newJob": self.sheet = .newJob
-                case "newDestination": if let job { self.sheet = .newDestination(job) }
-                case "check": if let job { self.sheet = .check(job) }
-                case "run": if let job { self.sheet = .runOptions(job) }
-                default: break
-                }
-            }
-        }
-        // development only: DATASYNCER_AUTORESTORE="<job name>" opens Restore… for that job;
-        // "<job name>|<destination name>|<folder>" restores the newest backup there straight away
-        if let spec = ProcessInfo.processInfo.environment["DATASYNCER_AUTORESTORE"] {
-            let parts = spec.split(separator: "|").map(String.init)
-            if let job = jobs.first(where: { $0.name == parts[0] }) {
-                selectedJobId = job.id
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    guard let self else { return }
-                    guard parts.count == 3, let d = job.destinations.first(where: { $0.name == parts[1] }) else { self.sheet = .restore(job); return }
-                    Task {
-                        guard let storage = try? await DefaultStorageFactory().storage(for: d), let catalog = try? await BackupCatalog.load(from: storage),
-                              let point = catalog.entries.first(where: { $0.manifest != nil })?.folder else { return }
-                        self.startRestore(job: job, destination: d, storage: storage, catalog: catalog, point: point, target: URL(fileURLWithPath: parts[2], isDirectory: true), removeDeleted: true)
-                    }
-                }
-            }
-        }
+        refreshNotificationStatus()
+        developmentHooks()
     }
 
     // MARK: jobs
@@ -115,8 +87,12 @@ final class AppModel: ObservableObject {
     /// a job or a restore is going; only one at a time
     var isRunning: Bool { (session?.isRunning ?? false) || (restoreSession?.isRunning ?? false) }
     /// what is going, for the strip and the sidebar
-    var runningName: String { session?.isRunning == true ? (session?.job.name ?? "") : "Restore" }
+    var runningName: String { session?.isRunning == true ? "the job “\(session?.job.name ?? "")”" : "the restore" }
     var canRun: Bool { selectedJob != nil && !isRunning }
+    /// a finished run or restore the user has not looked at yet
+    var hasLastRun: Bool { session != nil || restoreSession != nil }
+    /// the ids of every job except `job` — the runner refuses a folder another of them uses
+    func otherJobIds(_ job: Job) -> Set<UUID> { Set(jobs.map(\.id)).subtracting([job.id]) }
 
     func saveJobs() {
         do { try store.save(jobs) } catch { notice = Notice(title: "The jobs could not be saved", message: error.localizedDescription) }
@@ -136,11 +112,30 @@ final class AppModel: ObservableObject {
         saveJobs()
     }
 
+    /// Is this job being run right now?
+    func isRunning(_ job: Job) -> Bool { session?.isRunning == true && session?.job.id == job.id }
+
     func delete(_ job: Job) {
+        guard !isRunning(job) else { notice = Notice(title: "This job is running", message: "Wait for it to finish, or cancel it, before deleting it."); return }
         for d in job.destinations { try? secrets.remove(for: SecretAccount.destination(d.id)) }
         jobs.removeAll { $0.id == job.id }
         if selectedJobId == job.id { selectedJobId = jobs.first?.id }
         sourceStats.removeValue(forKey: job.id)
+        saveJobs()
+    }
+
+    /// A copy of a job with new ids (destinations too, so records and secrets stay apart). Secrets of the
+    /// original's share/SSH destinations are copied over so the duplicate works at once.
+    func duplicate(_ job: Job) {
+        var copy = Job(name: job.name + " copy", sourcePath: job.sourcePath)
+        for d in job.destinations {
+            var nd = d
+            nd.id = UUID()
+            if let secret = try? secrets.secret(for: SecretAccount.destination(d.id)) { try? secrets.set(secret, for: SecretAccount.destination(nd.id)) }
+            copy.destinations.append(nd)
+        }
+        if let i = jobs.firstIndex(where: { $0.id == job.id }) { jobs.insert(copy, at: i + 1) } else { jobs.append(copy) }
+        selectedJobId = copy.id
         saveJobs()
     }
 
@@ -164,9 +159,13 @@ final class AppModel: ObservableObject {
         upsert(d, in: job)
     }
 
-    func move(_ job: Job, from: IndexSet, to: Int) {
+    /// Moves a destination one step up or down in the run order.
+    func move(_ destination: Destination, in job: Job, by delta: Int) {
         var job = job
-        job.destinations.move(fromOffsets: from, toOffset: to)
+        guard let i = job.destinations.firstIndex(where: { $0.id == destination.id }) else { return }
+        let j = i + delta
+        guard j >= 0, j < job.destinations.count else { return }
+        job.destinations.swapAt(i, j)
         update(job)
     }
 
@@ -234,11 +233,14 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         let session = RunSession(job: job)
         self.session = session
+        restoreSession = nil
         screen = .run
         sheet = nil
         let runner = JobRunner()
+        let others = otherJobIds(job)
+        runner.otherJobIds = { _ in others }
         runner.confirmSync = { [weak self] destination, plan in
-            // the preview: shown on the run screen; the run waits for the answer
+            // the preview: a sheet on the main window (whatever screen is showing); the run waits for the answer
             await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
                 Task { @MainActor in
                     guard let self else { cont.resume(returning: false); return }
@@ -276,7 +278,7 @@ final class AppModel: ObservableObject {
     // MARK: restoring
 
     func askToRestore() {
-        guard let job = selectedJob else { return }
+        guard let job = selectedJob, !isRunning else { return }
         sheet = .restore(job)
     }
 
@@ -284,6 +286,7 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         let session = RestoreSession(job: job, destination: destination, point: point, target: target)
         restoreSession = session
+        self.session = nil
         screen = .restore
         sheet = nil
         sleepActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated], reason: "Data Syncer is restoring files")
@@ -291,6 +294,7 @@ final class AppModel: ObservableObject {
             let result = await RestoreEngine.restore(from: storage, catalog: catalog, point: point, to: target, removeDeleted: removeDeleted) { event in
                 Task { @MainActor in session.apply(event) }
             }
+            await storage.close()
             await MainActor.run { [weak self] in
                 session.finish(result)
                 self?.runTask = nil
@@ -306,8 +310,10 @@ final class AppModel: ObservableObject {
 
     /// Back to the jobs list; the run (if still going) carries on and shows in the strip.
     func showJobs() { screen = .jobs }
+
+    /// The run or restore screen (running, or finished and not yet dismissed).
     func watchRun() {
-        if restoreSession?.isRunning == true { screen = .restore } else if session != nil { screen = .run }
+        if restoreSession != nil { screen = .restore } else if session != nil { screen = .run }
     }
 
     /// Clears the finished run from the window.
@@ -315,6 +321,8 @@ final class AppModel: ObservableObject {
         if session?.isRunning == false { session = nil }
         screen = .jobs
     }
+
+    // MARK: notifications
 
     private func notify(_ report: RunReport) {
         // notifications need a real app bundle; running the bare program (swift run) has none
@@ -330,11 +338,75 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Asks macOS for permission the moment the setting is turned on, so the question isn't sprung at the end
+    /// of the first run; updates `notificationStatus` either way.
+    func requestNotificationPermission() {
+        guard Bundle.main.bundleIdentifier != nil else { notificationStatus = "not available when run outside the app bundle"; return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] _, _ in
+            Task { @MainActor in self?.refreshNotificationStatus() }
+        }
+    }
+
+    func refreshNotificationStatus() {
+        guard Bundle.main.bundleIdentifier != nil else { notificationStatus = ""; return }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] s in
+            let text: String
+            switch s.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: text = "allowed"
+            case .denied: text = "turned off for Data Syncer in System Settings → Notifications"
+            case .notDetermined: text = "macOS will ask the first time"
+            @unknown default: text = ""
+            }
+            Task { @MainActor in self?.notificationStatus = text }
+        }
+    }
+
     // MARK: history
 
     func clearHistory() {
         history = []
         try? historyStore.save([])
+    }
+
+    // MARK: development hooks (environment variables; see Docs/DEVELOPMENT.md; nothing happens when unset)
+
+    private func developmentHooks() {
+        let env = ProcessInfo.processInfo.environment
+        // DATASYNCER_AUTOSTART=<job name> runs that job as soon as the window is up
+        if let name = env["DATASYNCER_AUTOSTART"], let job = jobs.first(where: { $0.name == name }) {
+            selectedJobId = job.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start(job, choices: [:]) }
+        }
+        // DATASYNCER_AUTOSHEET=newJob|newDestination|check|run|settings[:tab[:provider]] opens that for the first job
+        if let what = env["DATASYNCER_AUTOSHEET"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                let job = self.selectedJob
+                switch what {
+                case "newJob": self.sheet = .newJob
+                case "newDestination": if let job { self.sheet = .newDestination(job) }
+                case "check": if let job { self.sheet = .check(job) }
+                case "run": if let job { self.sheet = .runOptions(job) }
+                default: break
+                }
+            }
+        }
+        // DATASYNCER_AUTORESTORE="<job name>" opens Restore… for that job;
+        // "<job name>|<destination name>|<folder>" restores the newest backup there straight away
+        if let spec = env["DATASYNCER_AUTORESTORE"] {
+            let parts = spec.split(separator: "|").map(String.init)
+            guard let first = parts.first, let job = jobs.first(where: { $0.name == first }) else { return }
+            selectedJobId = job.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                guard parts.count == 3, let d = job.destinations.first(where: { $0.name == parts[1] }) else { self.sheet = .restore(job); return }
+                Task {
+                    guard let storage = try? await DefaultStorageFactory().storage(for: d), let catalog = try? await BackupCatalog.load(from: storage, title: job.backupTitle(for: d)),
+                          let point = catalog.entries.first(where: { $0.manifest != nil })?.folder else { return }
+                    self.startRestore(job: job, destination: d, storage: storage, catalog: catalog, point: point, target: URL(fileURLWithPath: parts[2], isDirectory: true), removeDeleted: true)
+                }
+            }
+        }
     }
 }
 
@@ -345,12 +417,22 @@ struct SourceStats: Equatable {
     var state: State
 }
 
-/// A sync preview on the run screen: the plan, and how the user answered.
-struct SyncPreviewRequest: Identifiable {
+/// A sync preview: the plan, and how the user answered. The answer is taken once — a second one (Cancel run,
+/// then Return on the sheet as it closes) is ignored instead of resuming the run twice.
+final class SyncPreviewRequest: Identifiable {
     let id = UUID()
     let destination: Destination
     let plan: SyncPlan
-    let answer: (Bool) -> Void
+    private let onAnswer: (Bool) -> Void
+    private var answered = false
+    init(destination: Destination, plan: SyncPlan, onAnswer: @escaping (Bool) -> Void) {
+        self.destination = destination; self.plan = plan; self.onAnswer = onAnswer
+    }
+    func answer(_ go: Bool) {
+        guard !answered else { return }
+        answered = true
+        onAnswer(go)
+    }
 }
 
 // MARK: - Settings
@@ -369,7 +451,6 @@ enum Appearance: String, Codable, CaseIterable {
 struct AppSettings: Codable, Equatable {
     var appearance: Appearance = .system
     var notifyWhenFinished = true
-    var confirmBeforeDeleting = true
     /// the accent when no theme is active
     var accent: ThemeColor = .blue
     var themes: [CustomTheme] = []

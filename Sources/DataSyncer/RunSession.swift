@@ -9,6 +9,8 @@ struct DestinationRun: Identifiable {
     var phase: Phase = .waiting
     var checks: [CheckItem] = []
     var plan: String = ""
+    /// from the plan, until the result arrives
+    var planUnchanged = 0
     var progress = RunProgress()
     var copied = 0, deleted = 0, failed = 0, skipped = 0
     var result: DestinationResult?
@@ -87,8 +89,8 @@ final class RunSession: ObservableObject, Identifiable {
             if let i = index(id) { destinations[i].phase = .running }
         case .check(let id, let name, let ok, let detail):
             if let i = index(id) { destinations[i].checks.append(CheckItem(name: name, ok: ok, detail: detail)) }
-        case .planned(let id, let summary):
-            if let i = index(id) { destinations[i].plan = summary }
+        case .planned(let id, let summary, let unchanged):
+            if let i = index(id) { destinations[i].plan = summary; destinations[i].planUnchanged = unchanged }
         case .progress(let id, let p):
             // progress arrives for every few MB; the window needs it ten times a second at most
             let now = Date()

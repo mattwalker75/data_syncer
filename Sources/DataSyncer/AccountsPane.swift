@@ -9,6 +9,7 @@ struct AccountsPane: View {
     @State private var saved: [(account: String, label: String)] = []
     @State private var loadError: String?
     @State private var adding: CloudProvider?
+    @State private var signingOut: CloudAccount?
 
     var body: some View {
         Form {
@@ -17,7 +18,7 @@ struct AccountsPane: View {
                     Text("SSH on this Mac").fontWeight(.semibold)
                     Spacer()
                     Button("Open ~/.ssh in Finder") { NSWorkspace.shared.activateFileViewerSelecting([SSHInfo.sshDir]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
-                    Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Look again")
                 }
                 if let ssh {
                     LabeledContent("Keys in ~/.ssh") {
@@ -93,7 +94,7 @@ struct AccountsPane: View {
                             Text(uses(a)).font(.system(size: 11.5)).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Sign out") { model.remove(a) }.font(.system(size: 12))
+                        Button("Sign out") { signingOut = a }.font(.system(size: 12))
                             .help("Forgets the account and its tokens; destinations that use it will ask for an account")
                     }
                 }
@@ -106,6 +107,12 @@ struct AccountsPane: View {
             if let p = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").dropFirst(2).first.flatMap({ CloudProvider(rawValue: String($0)) }) { adding = p }
         }
         .sheet(item: $adding) { p in CloudAccountSheet(provider: p) { _ in } }
+        .confirmationDialog("Sign out of \(signingOut?.provider.label ?? "") (\(signingOut?.label ?? ""))?", isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }), titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { if let a = signingOut { model.remove(a) }; signingOut = nil }
+            Button("Cancel", role: .cancel) { signingOut = nil }
+        } message: {
+            Text(signingOut.map { "\(uses($0).prefix(1).uppercased() + uses($0).dropFirst()). The sign-in is forgotten; nothing in the service is touched." } ?? "")
+        }
     }
 
     private func uses(_ a: CloudAccount) -> String {

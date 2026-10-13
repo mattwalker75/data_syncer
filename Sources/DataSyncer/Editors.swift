@@ -6,14 +6,14 @@ import DataSyncerCore
 enum FolderPicker {
     /// The standard Mac "choose a folder" panel. nil when cancelled.
     @MainActor
-    static func choose(title: String, message: String, start: URL? = nil) -> URL? {
+    static func choose(title: String, message: String, start: URL? = nil, canCreate: Bool = false) -> URL? {
         let p = NSOpenPanel()
         p.title = title
         p.message = message
         p.prompt = "Choose"
         p.canChooseDirectories = true
         p.canChooseFiles = false
-        p.canCreateDirectories = false
+        p.canCreateDirectories = canCreate   // destinations must already exist (rule 6); a restore target may be made here
         p.allowsMultipleSelection = false
         if let start { p.directoryURL = start }
         return p.runModal() == .OK ? p.url : nil
@@ -38,10 +38,11 @@ struct JobEditor: View {
     let job: Job?
     @State private var name = ""
     @State private var sourcePath = ""
+    @State private var problem: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(job == nil ? "New job" : "Edit job").font(.title2).fontWeight(.bold)
+            Text(job == nil ? "New job" : "Rename, or change the source").font(.title2).fontWeight(.bold)
             Form {
                 TextField("Name", text: $name, prompt: Text("Work documents"))
                 LabeledContent("Source folder") {
@@ -54,6 +55,7 @@ struct JobEditor: View {
                 }
                 Text("The source is always a folder on this Mac, and it is the truth: copying only ever goes from it to the destinations.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
+                if let problem { HStack(spacing: 6) { Dot(color: Theme.problem); Text(problem) }.font(.system(size: 12.5)) }
             }
             .formStyle(.grouped)
             HStack {
@@ -70,7 +72,10 @@ struct JobEditor: View {
     }
 
     private func save() {
-        let n = name.trimmingCharacters(in: .whitespaces), s = sourcePath.trimmingCharacters(in: .whitespaces)
+        let n = name.trimmingCharacters(in: .whitespaces), s = (sourcePath.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: s, isDirectory: &isDir), isDir.boolValue else { problem = "That folder isn't there. Check the path, or choose it with Choose…"; return }
+        guard FileManager.default.isReadableFile(atPath: s) else { problem = "That folder can't be read. If it is in Desktop, Documents or another protected folder, give Data Syncer Full Disk Access (Settings → General)."; return }
         if var job {
             job.name = n; job.sourcePath = s
             model.update(job)
