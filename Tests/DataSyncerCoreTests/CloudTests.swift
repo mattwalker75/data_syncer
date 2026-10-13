@@ -186,6 +186,26 @@ final class S3Tests: XCTestCase {
         XCTAssertFalse(bucket.objects.keys.contains { $0.contains("_Full_T") })
     }
 
+    func testDeleteErrorsNumericEntitiesAndValidation() async throws {
+        let bucket = FakeBucket()
+        bucket.objects["w/"] = (Data(), Date()); bucket.objects["w/locked.txt"] = (Data(), Date())
+        FakeHTTP.install { req, body in
+            if req.httpMethod == "POST", req.url!.query?.contains("delete") == true {
+                return (200, [:], Data("<DeleteResult><Error><Key>w/locked.txt</Key><Code>AccessDenied</Code><Message>Object Lock</Message></Error></DeleteResult>".utf8))
+            }
+            return bucket.handle(req, body)
+        }
+        let st = S3Storage(options: S3Options(bucket: "bucket", region: "us-east-1", endpoint: "https://s3.fake", accessKey: "AKIAX", secretKey: "s"), folder: "w")
+        do { try await st.remove("locked.txt"); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("would not delete w/locked.txt"), e.message) }
+        do { try await st.remove(""); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("Refusing")) }
+        XCTAssertEqual(S3Storage.xmlUnescape("a&#13;b&#x41;c&amp;&lt;&unknown;"), "a\rbAc&<&unknown;")
+        XCTAssertNil(S3Storage.validate(bucket: "b", endpoint: "https://minio.local:9000"))
+        XCTAssertNotNil(S3Storage.validate(bucket: "b", endpoint: "minio.local:9000"))
+        XCTAssertNotNil(S3Storage.validate(bucket: "", endpoint: nil))
+        let dotted = S3Storage(options: S3Options(bucket: "my.photos", region: "eu-west-1", accessKey: "k", secretKey: "s"), folder: "")
+        XCTAssertEqual(dotted.url(key: "x").absoluteString, "https://s3.eu-west-1.amazonaws.com/my.photos/x")
+    }
+
     func testMissingFolderAndBadKeysAreSentences() async throws {
         let bucket = FakeBucket()
         FakeHTTP.install { req, body in bucket.handle(req, body) }
@@ -236,10 +256,19 @@ final class OAuthProviderTests: XCTestCase {
         FakeHTTP.install { req, _ in
             let q = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!.queryItems?.first { $0.name == "q" }?.value ?? ""
             if req.url!.path == "/drive/v3/files" {
+                if q == "trashed = false" {
+                    XCTAssertTrue(req.url!.query!.contains("q=trashed%20%3D%20false"))
+                    return (200, [:], Data(#"{"files":[{"id":"F1","name":"Data Syncer","mimeType":"application/vnd.google-apps.folder","parents":["root"]},{"id":"F2","name":"Work","mimeType":"application/vnd.google-apps.folder","parents":["F1"]},{"id":"A","name":"a.txt","mimeType":"text/plain","size":"12","modifiedTime":"2026-10-13T21:04:05.000Z","parents":["F2"]},{"id":"A-old","name":"a.txt","mimeType":"text/plain","size":"5","modifiedTime":"2026-10-01T00:00:00Z","parents":["F2"]},{"id":"S","name":"sub","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2026-10-13T21:00:00Z","parents":["F2"]},{"id":"P","name":"c++.txt","mimeType":"text/plain","size":"1","modifiedTime":"2026-10-13T21:00:00Z","parents":["S"]},{"id":"X","name":"elsewhere.txt","mimeType":"text/plain","size":"1","parents":["root"]}]}"#.utf8))
+                }
+                if q.contains("name = 'c++.txt'") {
+                    XCTAssertTrue(req.url!.query!.contains("c%2B%2B.txt"), "a + must be sent encoded")
+                    return (200, [:], Data(#"{"files":[{"id":"P","mimeType":"text/plain"}]}"#.utf8))
+                }
                 if q.contains("'root' in parents and name = 'Data Syncer'") { return (200, [:], Data(#"{"files":[{"id":"F1","mimeType":"application/vnd.google-apps.folder"}]}"#.utf8)) }
                 if q.contains("'F1' in parents and name = 'Work'") { return (200, [:], Data(#"{"files":[{"id":"F2","mimeType":"application/vnd.google-apps.folder"}]}"#.utf8)) }
                 if q.contains("name = 'missing'") { return (200, [:], Data(#"{"files":[]}"#.utf8)) }
-                if q.contains("'F2' in parents and trashed") { return (200, [:], Data(#"{"files":[{"id":"A","name":"a.txt","mimeType":"text/plain","size":"12","modifiedTime":"2026-10-13T21:04:05.000Z"},{"id":"S","name":"sub","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2026-10-13T21:00:00Z"}]}"#.utf8)) }
+                if q.contains("'F2' in parents and name = 'a.txt'") { return (200, [:], Data(#"{"files":[{"id":"A-old","mimeType":"text/plain","modifiedTime":"2026-10-01T00:00:00Z"},{"id":"A","mimeType":"text/plain","modifiedTime":"2026-10-13T21:04:05.000Z"}]}"#.utf8)) }
+                if q.contains("'F2' in parents and trashed") { return (200, [:], Data(#"{"files":[{"id":"A","name":"a.txt","mimeType":"text/plain","size":"12","modifiedTime":"2026-10-13T21:04:05.000Z"},{"id":"A-old","name":"a.txt","mimeType":"text/plain","size":"5","modifiedTime":"2026-10-01T00:00:00Z"},{"id":"S","name":"sub","mimeType":"application/vnd.google-apps.folder","modifiedTime":"2026-10-13T21:00:00Z"}]}"#.utf8)) }
                 if q.contains("'S' in parents and trashed") { return (200, [:], Data(#"{"files":[]}"#.utf8)) }
             }
             if req.url!.path == "/drive/v3/files/A" { return (200, [:], Data(#"{"id":"A","mimeType":"text/plain","size":"12","modifiedTime":"2026-10-13T21:04:05.000Z"}"#.utf8)) }
@@ -248,8 +277,11 @@ final class OAuthProviderTests: XCTestCase {
         let st = GoogleDriveStorage(tokens: provider(.googleDrive), folder: "Data Syncer/Work", accountLabel: "me@gmail.com")
         try await st.checkReachable()
         let walked = try await st.walk()
-        XCTAssertEqual(walked, ["a.txt": FileMeta(size: 12, modified: 1_791_925_445), "sub": FileMeta(isDirectory: true, modified: 1_791_925_200)])
-        let a = try await st.stat("a.txt"); XCTAssertEqual(a?.size, 12)
+        XCTAssertEqual(walked, ["a.txt": FileMeta(size: 12, modified: 1_791_925_445), "sub": FileMeta(isDirectory: true, modified: 1_791_925_200), "sub/c++.txt": FileMeta(size: 1, modified: 1_791_925_200)])
+        let listed = try await st.list("")
+        XCTAssertEqual(listed.count, 2, "a duplicate name is listed once, the newest")
+        let a = try await st.stat("a.txt"); XCTAssertEqual(a?.size, 12)   // the newest of the two "a.txt"
+        let plus = try await st.exists("sub/c++.txt"); XCTAssertTrue(plus)
         let missing = try await st.stat("missing"); XCTAssertNil(missing)
         let other = GoogleDriveStorage(tokens: provider(.googleDrive), folder: "Data Syncer/missing", accountLabel: "x")
         do { try await other.checkReachable(); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("Make this folder"), e.message) }
@@ -285,6 +317,10 @@ final class OAuthProviderTests: XCTestCase {
             let path = req.url!.path
             if path == "/v1.0/me/drive/root:/Backups/Work" { return (200, [:], Data(#"{"id":"1","folder":{"childCount":2}}"#.utf8)) }
             if path == "/v1.0/me/drive/root:/Backups/Work:/children" { return (200, [:], Data(#"{"value":[{"name":"a b.txt","size":12,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2026-10-13T21:04:05.123Z"}},{"name":"sub","folder":{"childCount":0}}]}"#.utf8)) }
+            if path == "/v1.0/me/drive/root:/Backups/Work:/delta" {
+                // the folder itself, its children (one deleted), and a grandchild — paths as Graph gives them
+                return (200, [:], Data(#"{"value":[{"name":"Work","folder":{},"parentReference":{"path":"/drive/root:/Backups"}},{"name":"a b.txt","size":12,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2026-10-13T21:04:05.123Z"},"parentReference":{"path":"/drive/root:/Backups/Work"}},{"name":"sub","folder":{"childCount":1},"parentReference":{"path":"/drive/root:/Backups/Work"}},{"name":"deep.txt","size":3,"file":{},"parentReference":{"path":"/drive/root:/Backups/Work/sub"}},{"name":"gone.txt","deleted":{},"parentReference":{"path":"/drive/root:/Backups/Work"}},{"name":"other.txt","size":1,"file":{},"parentReference":{"path":"/drive/root:/Backups/Workshop"}}],"@odata.deltaLink":"https://graph.microsoft.com/v1.0/me/drive/root/delta?token=x"}"#.utf8))
+            }
             if path == "/v1.0/me/drive/root:/Backups/Work/sub:/children" { return (200, [:], Data(#"{"value":[]}"#.utf8)) }
             if path == "/v1.0/me/drive/root:/Backups/Work/a b.txt" { return (200, [:], Data(#"{"name":"a b.txt","size":12,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2026-10-13T21:04:05.123Z"}}"#.utf8)) }
             return (404, [:], Data(#"{"error":{"message":"itemNotFound"}}"#.utf8))
@@ -292,12 +328,36 @@ final class OAuthProviderTests: XCTestCase {
         let st = OneDriveStorage(tokens: provider(.oneDrive), folder: "/Backups/Work/", accountLabel: "me@outlook.com")
         try await st.checkReachable()
         let walked = try await st.walk()
-        XCTAssertEqual(Set(walked.keys), ["a b.txt", "sub"])
+        XCTAssertEqual(Set(walked.keys), ["a b.txt", "sub", "sub/deep.txt"], "the folder itself, deleted items and a sibling folder's files are left out")
         XCTAssertEqual(walked["a b.txt"]?.modified ?? 0, 1_791_925_445.123, accuracy: 0.001)
+        let listed = try await st.list(""); XCTAssertEqual(listed.count, 2)
         let s = try await st.stat("a b.txt"); XCTAssertEqual(s?.size, 12)
         let gone = try await st.stat("zzz"); XCTAssertNil(gone)
         let other = OneDriveStorage(tokens: provider(.oneDrive), folder: "Elsewhere", accountLabel: "me")
         do { try await other.checkReachable(); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("isn't in this OneDrive"), e.message) }
+    }
+
+    func testDropboxHeaderIsASCII() {
+        let h = DropboxStorage.headerJSON(["path": "/Work/Résumé 日本 🙂.pdf", "mode": "overwrite"])
+        XCTAssertTrue(h.allSatisfy { $0.isASCII }, h)
+        XCTAssertTrue(h.contains("\\u00E9") && h.contains("\\u65E5") && h.contains("\\uD83D\\uDE42"), h)
+        let back = try! JSONSerialization.jsonObject(with: Data(h.utf8)) as! [String: String]
+        XCTAssertEqual(back["path"], "/Work/Résumé 日本 🙂.pdf")
+    }
+
+    func testHTTPRetriesWhenThrottledAndMapsCancellation() async throws {
+        let calls = Locked(0)
+        FakeHTTP.install { _, _ in
+            let n = calls.with { $0 += 1; return $0 }
+            return n < 3 ? (429, ["Retry-After": "0"], Data()) : (200, [:], Data("ok".utf8))
+        }
+        let r = try await HTTP.send(URLRequest(url: URL(string: "https://x.test/")!), service: "x")
+        XCTAssertEqual(r.status, 200); XCTAssertEqual(calls.value, 3)
+        XCTAssertNil(HTTP.retryDelay(HTTPResponse(status: 404, headers: [:], data: Data()), attempt: 0))
+        XCTAssertEqual(HTTP.retryDelay(HTTPResponse(status: 503, headers: ["retry-after": "7"], data: Data()), attempt: 1), 7)
+        XCTAssertNil(HTTP.retryDelay(HTTPResponse(status: 503, headers: [:], data: Data()), attempt: 3))
+        let cancelled = HTTP.explain(URLError(.cancelled), "x")
+        XCTAssertTrue(cancelled is CancellationError)
     }
 
     func testCloudAccountsAndSecrets() throws {

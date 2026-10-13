@@ -35,8 +35,21 @@ public final class S3Storage: Storage, @unchecked Sendable {
     // MARK: addressing and signing
 
     var baseURL: URL {
-        if let e = options.endpoint, let u = URL(string: e.hasSuffix("/") ? String(e.dropLast()) : e) { return u.appendingPathComponent(options.bucket) }
+        if let e = options.endpoint, let u = URL(string: e.hasSuffix("/") ? String(e.dropLast()) : e), u.host != nil { return u.appendingPathComponent(options.bucket) }
+        // a bucket name with a dot does not match Amazon's wildcard certificate: path-style for those
+        if options.bucket.contains(".") { return URL(string: "https://s3.\(options.region).amazonaws.com/\(options.bucket)")! }
         return URL(string: "https://\(options.bucket).s3.\(options.region).amazonaws.com")!
+    }
+
+    /// A plain sentence when the service address or bucket name can't work; nil when they look fine.
+    public static func validate(bucket: String, endpoint: String?) -> String? {
+        if bucket.isEmpty { return "Enter the bucket's name." }
+        if let e = endpoint?.trimmingCharacters(in: .whitespaces), !e.isEmpty {
+            guard let u = URL(string: e), let scheme = u.scheme?.lowercased(), ["http", "https"].contains(scheme), u.host != nil else {
+                return "The service address should start with https:// (or http://) and name the server, for example https://minio.local:9000."
+            }
+        }
+        return nil
     }
 
     func key(_ path: RelPath) -> String { prefix + path }
@@ -122,6 +135,7 @@ public final class S3Storage: Storage, @unchecked Sendable {
     // MARK: Storage
 
     public func checkReachable() async throws {
+        if let why = S3Storage.validate(bucket: options.bucket, endpoint: options.endpoint) { throw DSError(why) }
         let r = try await send(request("GET", key: "", query: [("list-type", "2"), ("prefix", prefix), ("max-keys", "1")]))
         guard r.ok else { throw fail("listing", r) }
         if !prefix.isEmpty {
@@ -203,6 +217,7 @@ public final class S3Storage: Storage, @unchecked Sendable {
     }
 
     public func remove(_ path: RelPath) async throws {
+        guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
         var keys = [key(path)]
         var token: String?
         repeat {
@@ -220,6 +235,11 @@ public final class S3Storage: Storage, @unchecked Sendable {
             let md5 = Data(Insecure.MD5.hash(data: body)).base64EncodedString()
             let r = try await send(request("POST", key: "", query: [("delete", "")], body: body, headers: ["Content-MD5": md5, "Content-Type": "application/xml"]))
             guard r.ok else { throw fail("deleting \(path)", r) }
+            // quiet mode answers 200 even when some keys could not be deleted
+            if let first = S3Storage.blocks(r.text, "Error").first {
+                let k = S3Storage.xmlValue(first, "Key") ?? "", code = S3Storage.xmlValue(first, "Code") ?? "", msg = S3Storage.xmlValue(first, "Message") ?? ""
+                throw DSError("Amazon S3 would not delete \(S3Storage.xmlUnescape(k)) (\(code) \(msg)). Check the key's permissions on this bucket, and whether the bucket has Object Lock or a retention policy.")
+            }
         }
     }
 
@@ -252,7 +272,8 @@ public final class S3Storage: Storage, @unchecked Sendable {
             let done = try await send(request("POST", key: key(path), query: [("uploadId", uploadId)], body: Data(xml.utf8), headers: ["Content-Type": "application/xml"]))
             guard done.ok, !done.text.contains("<Error>") else { throw fail("finishing the upload of \(path)", done) }
         } catch {
-            _ = try? await send(request("DELETE", key: key(path), query: [("uploadId", uploadId)]))
+            // abort the multipart upload (otherwise its parts are kept, and billed) — even after a cancel
+            await HTTP.sendIgnoringCancellation(request("DELETE", key: key(path), query: [("uploadId", uploadId)]), service: "Amazon S3")
             throw error
         }
     }
@@ -315,7 +336,25 @@ public final class S3Storage: Storage, @unchecked Sendable {
         s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
     }
     static func xmlUnescape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&apos;", with: "'").replacingOccurrences(of: "&amp;", with: "&")
+        guard s.contains("&") else { return s }
+        var out = ""
+        var rest = Substring(s)
+        while let amp = rest.firstIndex(of: "&") {
+            out += rest[..<amp]
+            rest = rest[amp...]
+            guard let semi = rest.firstIndex(of: ";"), rest.distance(from: rest.startIndex, to: semi) <= 10 else { out += "&"; rest = rest.dropFirst(); continue }
+            let entity = rest[rest.index(after: rest.startIndex)..<semi]
+            switch entity {
+            case "lt": out += "<"; case "gt": out += ">"; case "quot": out += "\""; case "apos": out += "'"; case "amp": out += "&"
+            default:
+                // numeric: &#13; or &#x0D; (keys with control characters come back this way)
+                if entity.hasPrefix("#x"), let v = UInt32(entity.dropFirst(2), radix: 16), let u = Unicode.Scalar(v) { out += String(Character(u)) }
+                else if entity.hasPrefix("#"), let v = UInt32(entity.dropFirst()), let u = Unicode.Scalar(v) { out += String(Character(u)) }
+                else { out += "&" + entity + ";" }
+            }
+            rest = rest[rest.index(after: semi)...]
+        }
+        return out + rest
     }
 
     /// "Wed, 12 Oct 2026 07:28:00 GMT"

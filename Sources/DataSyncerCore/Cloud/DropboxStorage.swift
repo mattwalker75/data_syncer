@@ -44,8 +44,25 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
         var r = URLRequest(url: URL(string: "\(DropboxStorage.content)/\(endpoint)")!)
         r.httpMethod = "POST"
         r.setValue("Bearer \(try await tokens.accessToken())", forHTTPHeaderField: "Authorization")
-        r.setValue(String(decoding: HTTP.json(arg), as: UTF8.self), forHTTPHeaderField: "Dropbox-API-Arg")
+        r.setValue(DropboxStorage.headerJSON(arg), forHTTPHeaderField: "Dropbox-API-Arg")
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        return r
+    }
+
+    /// The Dropbox-API-Arg header must be pure ASCII: every other character goes as a JSON \uXXXX escape.
+    static func headerJSON(_ arg: Any) -> String {
+        let raw = String(decoding: HTTP.json(arg), as: UTF8.self)
+        var out = ""
+        for u in raw.utf16 {
+            if u < 0x80 { out.append(Character(Unicode.Scalar(u)!)) } else { out += String(format: "\\u%04X", u) }
+        }
+        return out
+    }
+
+    /// A content-endpoint upload with the same "expired token → refresh → once more" as `send`.
+    private func uploadContent(_ endpoint: String, arg: Any, data: Data) async throws -> HTTPResponse {
+        var r = try await HTTP.upload(try await contentRequest(endpoint, arg: arg), data: data, service: "Dropbox")
+        if r.status == 401 { tokens.invalidate(); r = try await HTTP.upload(try await contentRequest(endpoint, arg: arg), data: data, service: "Dropbox") }
         return r
     }
 
@@ -133,22 +150,34 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
     }
 
     public func remove(_ path: RelPath) async throws {
+        guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
         let r = try await rpc("files/delete_v2", ["path": p(path)])
-        guard r.ok || DropboxStorage.isNotFound(r) else { throw fail("deleting \(path)", r) }
+        if r.ok || DropboxStorage.isNotFound(r) { return }
+        // a very large folder: Dropbox asks for it piecemeal
+        if r.text.contains("too_many_files") {
+            for (child, _) in try await entries(p(path), recursive: false) {
+                let rel = String(child.dropFirst(root.count + 1))
+                try await remove(rel)
+            }
+            let again = try await rpc("files/delete_v2", ["path": p(path)])
+            guard again.ok || DropboxStorage.isNotFound(again) else { throw fail("deleting \(path)", again) }
+            return
+        }
+        throw fail("deleting \(path)", r)
     }
 
     public func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws {
         let commit: [String: Any] = ["path": p(path), "mode": "overwrite", "mute": true, "client_modified": DropboxStorage.stamp(meta.modified)]
         if meta.size <= Int64(DropboxStorage.chunk) {
             let data = try Data(contentsOf: localURL)
-            let r = try await HTTP.upload(try await contentRequest("files/upload", arg: commit), data: data, service: "Dropbox")
+            let r = try await uploadContent("files/upload", arg: commit, data: data)
             guard r.ok else { throw fail("writing \(path)", r) }
             progress?(Int64(data.count))
             return
         }
         // a session: start, append, finish
         let first = try HTTP.chunk(of: localURL, offset: 0, length: DropboxStorage.chunk)
-        let s = try await HTTP.upload(try await contentRequest("files/upload_session/start", arg: ["close": false]), data: first, service: "Dropbox")
+        let s = try await uploadContent("files/upload_session/start", arg: ["close": false], data: first)
         guard s.ok, let sessionId = s.json()?["session_id"] as? String else { throw fail("starting the upload of \(path)", s) }
         var offset = Int64(first.count)
         progress?(offset)
@@ -160,22 +189,23 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
             let last = offset + Int64(chunk.count) >= meta.size
             let r: HTTPResponse
             if last {
-                r = try await HTTP.upload(try await contentRequest("files/upload_session/finish", arg: ["cursor": cursor, "commit": commit]), data: chunk, service: "Dropbox")
+                r = try await uploadContent("files/upload_session/finish", arg: ["cursor": cursor, "commit": commit], data: chunk)
             } else {
-                r = try await HTTP.upload(try await contentRequest("files/upload_session/append_v2", arg: ["cursor": cursor, "close": false]), data: chunk, service: "Dropbox")
+                r = try await uploadContent("files/upload_session/append_v2", arg: ["cursor": cursor, "close": false], data: chunk)
             }
             guard r.ok else { throw fail("uploading \(path)", r) }
             offset += Int64(chunk.count)
             progress?(offset)
         }
         if offset == Int64(first.count) {   // exactly one chunk: finish with nothing more
-            let r = try await HTTP.upload(try await contentRequest("files/upload_session/finish", arg: ["cursor": ["session_id": sessionId, "offset": offset], "commit": commit]), data: Data(), service: "Dropbox")
+            let r = try await uploadContent("files/upload_session/finish", arg: ["cursor": ["session_id": sessionId, "offset": offset], "commit": commit], data: Data())
             guard r.ok else { throw fail("finishing the upload of \(path)", r) }
         }
     }
 
     public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
-        let r = try await HTTP.download(try await contentRequest("files/download", arg: ["path": p(path)]), to: localURL, service: "Dropbox")
+        var r = try await HTTP.download(try await contentRequest("files/download", arg: ["path": p(path)]), to: localURL, service: "Dropbox")
+        if r.status == 401 { tokens.invalidate(); r = try await HTTP.download(try await contentRequest("files/download", arg: ["path": p(path)]), to: localURL, service: "Dropbox") }
         guard r.ok else { throw fail("reading \(path)", r) }
         try LocalStorage.apply(meta, to: localURL)
     }
@@ -188,7 +218,7 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
 
     public func writeData(_ data: Data, to path: RelPath) async throws {
         let commit: [String: Any] = ["path": p(path), "mode": "overwrite", "mute": true]
-        let r = try await HTTP.upload(try await contentRequest("files/upload", arg: commit), data: data, service: "Dropbox")
+        let r = try await uploadContent("files/upload", arg: commit, data: data)
         guard r.ok else { throw fail("writing \(path)", r) }
     }
 

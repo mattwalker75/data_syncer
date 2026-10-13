@@ -27,20 +27,48 @@ public enum HTTP {
         set { lock.lock(); _session = newValue; lock.unlock() }
     }
 
-    /// Sends a request and returns what came back (any status; the caller decides what a 404 means).
-    public static func send(_ request: URLRequest, service: String) async throws -> HTTPResponse {
-        do {
-            let (data, r) = try await session.data(for: request)
-            return make(data, r)
-        } catch { throw explain(error, service) }
+    /// Statuses worth a second try, and how long to wait: the service's Retry-After, else 1 s, 2 s, 4 s.
+    static func retryDelay(_ r: HTTPResponse, attempt: Int) -> TimeInterval? {
+        guard attempt < 3, [429, 500, 502, 503, 504].contains(r.status) else { return nil }
+        if let h = r.header("retry-after"), let secs = TimeInterval(h) { return min(secs, 60) }
+        return TimeInterval(1 << attempt)
     }
 
-    /// Sends a request whose body is `data` (an upload chunk).
+    /// Sends a request and returns what came back (any status; the caller decides what a 404 means).
+    /// A throttled or briefly failing service (429, 5xx) is retried a few times with a pause.
+    public static func send(_ request: URLRequest, service: String) async throws -> HTTPResponse {
+        var attempt = 0
+        while true {
+            let r: HTTPResponse
+            do {
+                let (data, resp) = try await session.data(for: request)
+                r = make(data, resp)
+            } catch { throw explain(error, service) }
+            guard let delay = retryDelay(r, attempt: attempt) else { return r }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            attempt += 1
+        }
+    }
+
+    /// Sends a request whose body is `data` (an upload chunk), with the same retries.
     public static func upload(_ request: URLRequest, data: Data, service: String) async throws -> HTTPResponse {
-        do {
-            let (body, r) = try await session.upload(for: request, from: data)
-            return make(body, r)
-        } catch { throw explain(error, service) }
+        var attempt = 0
+        while true {
+            let r: HTTPResponse
+            do {
+                let (body, resp) = try await session.upload(for: request, from: data)
+                r = make(body, resp)
+            } catch { throw explain(error, service) }
+            guard let delay = retryDelay(r, attempt: attempt) else { return r }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            attempt += 1
+        }
+    }
+
+    /// For cleanup after a cancel (aborting an upload, removing a half-made folder): runs outside the cancelled
+    /// task so it actually happens. Errors are ignored — it is best effort.
+    public static func sendIgnoringCancellation(_ request: URLRequest, service: String) async {
+        _ = await Task.detached { try? await send(request, service: service) }.value
     }
 
     /// Downloads the response body straight to a local file.
@@ -59,7 +87,7 @@ public enum HTTP {
                 return r2
             }
             return resp
-        } catch let e as DSError { throw e } catch { throw explain(error, service) }
+        } catch let e as DSError { throw e } catch is CancellationError { throw CancellationError() } catch { throw explain(error, service) }
     }
 
     private static func make(_ data: Data, _ r: URLResponse) -> HTTPResponse {
@@ -69,15 +97,16 @@ public enum HTTP {
         return HTTPResponse(status: h?.statusCode ?? 0, headers: headers, data: data)
     }
 
-    static func explain(_ error: Error, _ service: String) -> DSError {
+    /// Network trouble as a sentence; a cancelled request is a cancellation, not a failure.
+    static func explain(_ error: Error, _ service: String) -> Error {
         let e = error as NSError
+        if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled || Task.isCancelled { return CancellationError() }
         switch (e.domain, e.code) {
         case (NSURLErrorDomain, NSURLErrorNotConnectedToInternet), (NSURLErrorDomain, NSURLErrorNetworkConnectionLost):
             return DSError("\(service) can't be reached — this Mac seems to be offline.")
         case (NSURLErrorDomain, NSURLErrorCannotFindHost), (NSURLErrorDomain, NSURLErrorDNSLookupFailed):
             return DSError("\(service) can't be found. Check the address, or that you're on the right network.")
         case (NSURLErrorDomain, NSURLErrorTimedOut): return DSError("\(service) isn't answering (timed out).")
-        case (NSURLErrorDomain, NSURLErrorCancelled): return DSError("cancelled")
         default: return DSError("\(service): \(e.localizedDescription)")
         }
     }

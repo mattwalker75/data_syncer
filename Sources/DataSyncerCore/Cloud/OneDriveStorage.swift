@@ -100,13 +100,39 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
 
     public func list(_ dir: RelPath) async throws -> [Entry] {
         var out: [Entry] = []
-        var next: String? = item(dir, suffix: "children") + "?$select=id,name,size,folder,file,fileSystemInfo&$top=1000"
+        var next: String? = item(dir, suffix: "children") + "?$select=id,name,size,folder,file,fileSystemInfo&$top=200"
         while let url = next {
             let r = try await send(try await request("GET", url))
             if r.status == 404 { return [] }
             guard r.ok, let j = r.json() else { throw fail("listing \(dir)", r) }
             for e in (j["value"] as? [[String: Any]]) ?? [] { if let name = e["name"] as? String { out.append(Entry(name: name, meta: meta(e))) } }
             next = j["@odata.nextLink"] as? String
+        }
+        return out
+    }
+
+    /// The whole tree in one paged request (delta), instead of one request per folder.
+    public func walk(_ dir: RelPath) async throws -> Snapshot {
+        let base = joinPath(root, dir)
+        var out: Snapshot = [:]
+        var next: String? = item(dir, suffix: "delta") + "?$select=id,name,size,folder,file,fileSystemInfo,parentReference,deleted"
+        let basePathPrefix = "/drive/root:" + (base.isEmpty ? "" : "/" + base)
+        while let url = next {
+            let r = try await send(try await request("GET", url))
+            if r.status == 404 { return [:] }
+            guard r.ok, let j = r.json() else { throw fail("listing \(dir)", r) }
+            for e in (j["value"] as? [[String: Any]]) ?? [] {
+                guard e["deleted"] == nil, let name = e["name"] as? String, let parent = (e["parentReference"] as? [String: Any])?["path"] as? String else { continue }
+                // parentReference.path is "/drive/root:/Backups/Work/sub" (percent-encoded)
+                let decoded = parent.removingPercentEncoding ?? parent
+                guard decoded == basePathPrefix || decoded.hasPrefix(basePathPrefix + "/") else { continue }   // the folder itself comes back too
+                let relParent = String(decoded.dropFirst(basePathPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                let rel = relParent.isEmpty ? name : relParent + "/" + name
+                if dir.isEmpty, rel == Records.folderName || rel.hasPrefix(Records.folderName + "/") { continue }
+                out[rel] = meta(e)
+            }
+            next = j["@odata.nextLink"] as? String
+            if next == nil, j["@odata.deltaLink"] != nil { break }
         }
         return out
     }
@@ -122,6 +148,7 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
     }
 
     public func remove(_ path: RelPath) async throws {
+        guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
         let r = try await send(try await request("DELETE", item(path)))
         guard r.ok || r.status == 404 else { throw fail("deleting \(path)", r) }
     }
@@ -158,7 +185,7 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
             }
         } catch {
             var cancel = URLRequest(url: URL(string: uploadURL)!); cancel.httpMethod = "DELETE"
-            _ = try? await HTTP.send(cancel, service: "OneDrive")
+            await HTTP.sendIgnoringCancellation(cancel, service: "OneDrive")
             throw error
         }
     }

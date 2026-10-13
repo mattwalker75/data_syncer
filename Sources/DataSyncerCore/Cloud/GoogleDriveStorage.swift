@@ -26,7 +26,8 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
 
     private func request(_ method: String, _ url: String, query: [(String, String)] = [], json: Any? = nil) async throws -> URLRequest {
         var c = URLComponents(string: url)!
-        if !query.isEmpty { c.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) } }
+        // encoded by hand: URLComponents leaves "+" alone, and Google reads a bare "+" as a space
+        if !query.isEmpty { c.percentEncodedQuery = query.map { "\(HTTP.encode($0.0))=\(HTTP.encode($0.1))" }.joined(separator: "&") }
         var r = URLRequest(url: c.url!)
         r.httpMethod = method
         r.setValue("Bearer \(try await tokens.accessToken())", forHTTPHeaderField: "Authorization")
@@ -73,10 +74,11 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
             let key = sofar.joined(separator: "/")
             if let c = cached(key) { parent = c; continue }
             let q = "'\(parent)' in parents and name = '\(name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'"))' and trashed = false"
-            let r = try await send(try await request("GET", "\(GoogleDriveStorage.api)/files", query: [("q", q), ("fields", "files(id,mimeType)"), ("pageSize", "2")]))
+            let r = try await send(try await request("GET", "\(GoogleDriveStorage.api)/files", query: [("q", q), ("fields", "files(id,mimeType,modifiedTime)"), ("pageSize", "10")]))
             guard r.ok else { throw fail("looking up \(key)", r) }
             let files = (r.json()?["files"] as? [[String: Any]]) ?? []
-            if let f = files.first, let id = f["id"] as? String {
+            // Drive allows several files with one name in a folder: always take the newest, so runs stay consistent
+            if let f = GoogleDriveStorage.newest(files), let id = f["id"] as? String {
                 cache(key, id); parent = id
             } else if create {
                 let m: [String: Any] = ["name": name, "mimeType": GoogleDriveStorage.folderMime, "parents": [parent]]
@@ -88,6 +90,10 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
             }
         }
         return parent
+    }
+
+    static func newest(_ files: [[String: Any]]) -> [String: Any]? {
+        files.max { HTTP.date($0["modifiedTime"] as? String) < HTTP.date($1["modifiedTime"] as? String) }
     }
 
     private func meta(_ f: [String: Any]) -> FileMeta {
@@ -126,6 +132,11 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
             guard r.ok, let json = r.json() else { throw fail("listing \(dir)", r) }
             for f in (json["files"] as? [[String: Any]]) ?? [] {
                 guard let name = f["name"] as? String, let fid = f["id"] as? String else { continue }
+                if let i = out.firstIndex(where: { $0.name == name }) {
+                    // a duplicate name: keep the newest (the one id(of:) would pick)
+                    if meta(f).modified > out[i].meta.modified { out[i] = Entry(name: name, meta: meta(f)); cache((fullPath(dir) + [name]).joined(separator: "/"), fid) }
+                    continue
+                }
                 cache((fullPath(dir) + [name]).joined(separator: "/"), fid)
                 out.append(Entry(name: name, meta: meta(f)))
             }
@@ -134,9 +145,54 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
         return out
     }
 
+    /// The whole tree in as few requests as possible: one listing of everything the app can see, assembled by
+    /// parent ids under the folder (instead of one request per folder).
+    public func walk(_ dir: RelPath) async throws -> Snapshot {
+        guard let rootId = try await id(of: fullPath(dir)) else { return [:] }
+        var all: [String: [String: Any]] = [:]   // id → file
+        var byParent: [String: [[String: Any]]] = [:]
+        var token: String?
+        repeat {
+            var q = [("q", "trashed = false"), ("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,parents)"), ("pageSize", "1000")]
+            if let t = token { q.append(("pageToken", t)) }
+            let r = try await send(try await request("GET", "\(GoogleDriveStorage.api)/files", query: q))
+            guard r.ok, let json = r.json() else { throw fail("listing \(dir)", r) }
+            for f in (json["files"] as? [[String: Any]]) ?? [] {
+                guard let id = f["id"] as? String else { continue }
+                all[id] = f
+                for p in (f["parents"] as? [String]) ?? [] { byParent[p, default: []].append(f) }
+            }
+            token = json["nextPageToken"] as? String
+        } while token != nil
+        var out: Snapshot = [:]
+        var queue: [(String, String)] = [(rootId, "")]
+        var i = 0
+        while i < queue.count {
+            let (parent, prefix) = queue[i]; i += 1
+            var seen: [String: [String: Any]] = [:]
+            for f in byParent[parent] ?? [] {
+                guard let name = f["name"] as? String else { continue }
+                if let other = seen[name], HTTP.date(other["modifiedTime"] as? String) >= HTTP.date(f["modifiedTime"] as? String) { continue }
+                seen[name] = f
+            }
+            for (name, f) in seen {
+                let rel = prefix.isEmpty ? name : prefix + "/" + name
+                if dir.isEmpty, rel == Records.folderName || rel.hasPrefix(Records.folderName + "/") { continue }
+                let m = meta(f)
+                out[rel] = m
+                if let fid = f["id"] as? String {
+                    cache((fullPath(dir) + rel.split(separator: "/").map(String.init)).joined(separator: "/"), fid)
+                    if m.isDirectory { queue.append((fid, rel)) }
+                }
+            }
+        }
+        return out
+    }
+
     public func makeDirectory(_ path: RelPath) async throws { _ = try await id(of: fullPath(path), create: true) }
 
     public func remove(_ path: RelPath) async throws {
+        guard !path.isEmpty else { throw DSError("Refusing to remove the destination folder itself.") }
         guard let id = try await id(of: fullPath(path)) else { return }
         let r = try await send(try await request("DELETE", "\(GoogleDriveStorage.api)/files/\(id)"))
         guard r.ok || r.status == 404 else { throw fail("deleting \(path)", r) }
@@ -157,6 +213,7 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
         guard s.ok, let session = s.header("location") else { throw fail("starting the upload of \(path)", s) }
         var offset: Int64 = 0
         var finalId: String?
+        var done = false
         repeat {
             try Task.checkCancellation()
             let chunk = meta.size == 0 ? Data() : try HTTP.chunk(of: localURL, offset: offset, length: GoogleDriveStorage.chunk)
@@ -166,15 +223,26 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
             put.setValue(meta.size == 0 ? "bytes */0" : "bytes \(offset)-\(end - 1)/\(meta.size)", forHTTPHeaderField: "Content-Range")
             let r = try await HTTP.upload(put, data: chunk, service: "Google Drive")
             if r.status == 308 {
-                offset = end
+                // Google says how much it has: "Range: bytes=0-N" (nothing = nothing yet); carry on from there
+                if let range = r.header("range"), let dash = range.lastIndex(of: "-"), let last = Int64(range[range.index(after: dash)...]) { offset = last + 1 }
+                else if r.header("range") == nil { offset = 0 } else { offset = end }
+                if meta.size == 0 { throw DSError("Google Drive did not finish the empty file \(path).") }
             } else if r.ok {
                 offset = meta.size
                 finalId = r.json()?["id"] as? String
+                done = true
             } else {
                 throw fail("uploading \(path)", r)
             }
             progress?(offset)
-        } while offset < meta.size
+        } while !done && offset < meta.size
+        if !done {
+            // all bytes sent but no final answer yet: ask where things stand
+            var ask = URLRequest(url: URL(string: session)!); ask.httpMethod = "PUT"; ask.setValue("bytes */\(meta.size)", forHTTPHeaderField: "Content-Range")
+            let r = try await HTTP.upload(ask, data: Data(), service: "Google Drive")
+            guard r.ok else { throw fail("finishing the upload of \(path)", r) }
+            finalId = r.json()?["id"] as? String
+        }
         if let finalId { cache(comps.joined(separator: "/"), finalId) }
     }
 

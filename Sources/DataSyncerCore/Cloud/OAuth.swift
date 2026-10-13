@@ -37,18 +37,24 @@ public enum OAuth {
         let state = UUID().uuidString
         var c = URLComponents(string: config.authURL)!
         var items = [URLQueryItem(name: "client_id", value: config.clientId), URLQueryItem(name: "redirect_uri", value: redirectURI),
-                     URLQueryItem(name: "response_type", value: "code"), URLQueryItem(name: "scope", value: config.scopes.joined(separator: " ")),
+                     URLQueryItem(name: "response_type", value: "code"),
                      URLQueryItem(name: "code_challenge", value: challenge), URLQueryItem(name: "code_challenge_method", value: "S256"),
                      URLQueryItem(name: "state", value: state)]
+        if !config.scopes.isEmpty { items.append(URLQueryItem(name: "scope", value: config.scopes.joined(separator: " "))) }
         for (k, v) in config.extraAuthParams.sorted(by: { $0.key < $1.key }) { items.append(URLQueryItem(name: k, value: v)) }
         c.queryItems = items
         let url = c.url!
         let listener = try LoopbackListener(port: port)
         defer { listener.stop() }
         if let open { open(url) } else { _ = try? await Shell.run("/usr/bin/open", [url.absoluteString]) }
-        let params = try await listener.waitForCallback(timeout: 300)
+        // closing the sheet (cancelling the task) frees the port at once instead of five minutes later
+        let params = try await withTaskCancellationHandler {
+            try await listener.waitForCallback(timeout: 300)
+        } onCancel: {
+            listener.cancel()
+        }
         guard params["state"] == state else { throw DSError("The sign-in came back with the wrong state — try again.") }
-        if let err = params["error"] { throw DSError("\(config.service) didn't complete the sign-in: \(params["error_description"] ?? err)") }
+        if let err = params["error"] { throw DSError("\(config.service) didn't complete the sign-in: \((params["error_description"] ?? err).replacingOccurrences(of: "+", with: " "))") }
         guard let code = params["code"] else { throw DSError("\(config.service) sent no code back — try again.") }
         var form = ["grant_type": "authorization_code", "code": code, "redirect_uri": redirectURI, "client_id": config.clientId, "code_verifier": verifier]
         if let s = config.clientSecret { form["client_secret"] = s }
@@ -101,15 +107,21 @@ public final class TokenProvider: @unchecked Sendable {
     private var tokens: OAuthTokens
     private let save: @Sendable (OAuthTokens) -> Void
     private let lock = NSLock()
+    /// one refresh at a time: two callers must not both refresh (Microsoft rotates refresh tokens)
+    private var refreshing: Task<OAuthTokens, Error>?
 
     public init(config: OAuthConfig, tokens: OAuthTokens, save: @escaping @Sendable (OAuthTokens) -> Void) {
         self.config = config; self.tokens = tokens; self.save = save
     }
 
     public func accessToken() async throws -> String {
-        lock.lock(); let t = tokens; lock.unlock()
+        lock.lock(); let t = tokens; let inFlight = refreshing; lock.unlock()
         if t.expiresAt.timeIntervalSinceNow > 60 { return t.accessToken }
-        let fresh = try await OAuth.refresh(config, t)
+        if let inFlight { return try await inFlight.value.accessToken }
+        let task = Task { [config] in try await OAuth.refresh(config, t) }
+        lock.lock(); refreshing = task; lock.unlock()
+        defer { lock.lock(); refreshing = nil; lock.unlock() }
+        let fresh = try await task.value
         lock.lock(); tokens = fresh; lock.unlock()
         save(fresh)
         return fresh.accessToken
@@ -127,17 +139,30 @@ final class LoopbackListener: @unchecked Sendable {
     private let lock = NSLock()
 
     init(port: UInt16) throws {
+        // loopback only: nothing on the network may reach it, and macOS's firewall has nothing to ask about
+        let params = NWParameters.tcp
+        params.requiredInterfaceType = .loopback
+        params.allowLocalEndpointReuse = true
         do {
-            listener = try NWListener(using: .tcp, on: NWEndpoint.Port(rawValue: port)!)
+            listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
         } catch { throw DSError("Port \(port) on this Mac is in use, so the sign-in can't come back to Data Syncer. Quit whatever is using it and try again.") }
     }
+
+    /// Stops waiting (the sheet was closed).
+    func cancel() { finish(.failure(CancellationError())); listener.cancel() }
 
     func waitForCallback(timeout: TimeInterval) async throws -> [String: String] {
         try await withCheckedThrowingContinuation { cont in
             lock.lock(); continuation = cont; lock.unlock()
             listener.newConnectionHandler = { [weak self] conn in self?.handle(conn) }
             listener.stateUpdateHandler = { [weak self] state in
-                if case .failed(let e) = state { self?.finish(.failure(DSError("The sign-in listener failed: \(e.localizedDescription)"))) }
+                if case .failed(let e) = state {
+                    if case .posix(let code) = e, code == .EADDRINUSE {
+                        self?.finish(.failure(DSError("Port \(OAuth.port) on this Mac is in use, so the sign-in can't come back to Data Syncer. Quit whatever is using it (or wait a minute if a previous sign-in was just closed) and try again.")))
+                    } else {
+                        self?.finish(.failure(DSError("The sign-in listener failed: \(e.localizedDescription)")))
+                    }
+                }
             }
             listener.start(queue: queue)
             queue.asyncAfter(deadline: .now() + timeout) { [weak self] in
@@ -156,6 +181,11 @@ final class LoopbackListener: @unchecked Sendable {
             var params: [String: String] = [:]
             if parts.count >= 2, let comps = URLComponents(string: "http://localhost" + parts[1]) {
                 for item in comps.queryItems ?? [] { params[item.name] = item.value ?? "" }
+            }
+            // a browser preconnect or favicon request is not the callback
+            if parts.count >= 2, !parts[1].hasPrefix("/callback") {
+                conn.send(content: Data("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".utf8), completion: .contentProcessed { _ in conn.cancel() })
+                return
             }
             let ok = params["code"] != nil
             let body = ok
