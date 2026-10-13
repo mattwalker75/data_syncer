@@ -5,6 +5,19 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 ## [Unreleased]
 
 ### Added
+- 2026-10-13: **Step 2 — the windows.** The main window (Theme 1: jobs down the left with their last
+  run, the selected job's page with its source and size, destinations with mode badges, last-run
+  lines and on/off switches, recent runs; New job and the Settings gear at the bottom of the sidebar;
+  Check destinations / Restore… / Run… in the toolbar). Job and destination editors (folders on this
+  Mac, iCloud Drive, USB drives by name with a drive picker; all three modes with their options). The
+  Run… sheet (full / incremental / let Data Syncer choose, per destination), the run screen (checks,
+  destinations, progress, counts, file-by-file log, summary), the sync preview (go ahead / skip),
+  Back to jobs with the running strip (Watch / Cancel run) and Run… disabled meanwhile, cancel,
+  no-sleep during a run, a notification with a summary when a run finishes. Settings: General (files,
+  Full Disk Access shortcut), Appearance (light / dark / system), Accounts and the rest of Appearance
+  as placeholders, Notifications, Run history (table + clear). Core: `confirmSync` preview hook,
+  `RunHistory` (runs.json, newest first, capped at 500), `RunProgress` (renamed from `Progress`),
+  `DATASYNCER_HOME`. 25 tests. User guide in Docs/USER_GUIDE.md.
 - 2026-10-13: **Step 1 — the core.** Jobs (one local source, many destinations) and destinations
   with three modes: Sync (preview first; deleting files the source no longer has is a per-destination
   switch), Full only (a new dated folder every run) and Full + incremental (chains measured since the

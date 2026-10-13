@@ -24,10 +24,11 @@ themselves, and another Mac can use them.
 
 ## Status
 
-Built step by step. **Step 1 (done): the core** — jobs, destinations, the scanner, sync, full and
-incremental backups, the records, restore and the pre-run checks, for folders on this Mac and USB
-drives, with 23 tests. **Next:** the windows (step 2), restore (3), network, SSH and iCloud
-destinations (4), the cloud services (5), appearance (6).
+Built step by step. **Done:** step 1, the core (jobs, destinations, the scanner, sync, full and
+incremental backups, the records, restore and the pre-run checks, 25 tests) and step 2, the windows
+(the main window, job and destination editors, Check destinations, the run screen with the sync
+preview, Settings, notifications) for folders on this Mac, iCloud Drive and USB drives.
+**Next:** the restore screen (3), network, SSH destinations (4), the cloud services (5), appearance (6).
 
 ## Quick start
 
@@ -47,11 +48,10 @@ install them).
 
 | | |
 | --- | --- |
+| [Docs/USER_GUIDE.md](Docs/USER_GUIDE.md) | Using the app: jobs, destinations, running, settings. |
 | [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md) | How it is built: the core's parts, what a run does, the storage interface every destination implements. |
 | [Docs/RECORDS.md](Docs/RECORDS.md) | What Data Syncer writes beside your copies, backup folder names, chains, and what deleting a backup does. |
 | [Docs/SCRIPTS.md](Docs/SCRIPTS.md) | `INSTALL_APP.sh`, `BUILD_APP.sh`, the icon script. |
 | [Docs/DEVELOPMENT.md](Docs/DEVELOPMENT.md) | Building, tests, conventions. |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, when. |
 | [CLAUDE.md](CLAUDE.md) | Notes for an AI assistant working on this code. |
-
-The user guide arrives with the windows in step 2.

@@ -5,12 +5,15 @@ import Foundation
 
 // MARK: - What a run reports
 
-public struct Progress: Equatable, Sendable {
+public struct RunProgress: Equatable, Sendable {
     public var filesDone = 0
     public var filesTotal = 0
     public var bytesDone: Int64 = 0
     public var bytesTotal: Int64 = 0
     public var currentPath: RelPath = ""
+    public init(filesDone: Int = 0, filesTotal: Int = 0, bytesDone: Int64 = 0, bytesTotal: Int64 = 0, currentPath: RelPath = "") {
+        self.filesDone = filesDone; self.filesTotal = filesTotal; self.bytesDone = bytesDone; self.bytesTotal = bytesTotal; self.currentPath = currentPath
+    }
     public var fraction: Double { bytesTotal > 0 ? min(1, Double(bytesDone) / Double(bytesTotal)) : (filesTotal > 0 ? Double(filesDone) / Double(filesTotal) : 0) }
 }
 
@@ -26,12 +29,12 @@ public enum RunEvent: Sendable {
     case check(Destination.ID, name: String, ok: Bool, detail: String)
     /// the plan, in words ("copy 212, delete 3 · 12,268 unchanged")
     case planned(Destination.ID, summary: String)
-    case progress(Destination.ID, Progress)
+    case progress(Destination.ID, RunProgress)
     case file(Destination.ID, RelPath, FileAction)
     case destinationFinished(DestinationResult)
 }
 
-public enum DestinationStatus: Equatable, Sendable {
+public enum DestinationStatus: Codable, Equatable, Sendable {
     case finished
     case finishedWithProblems
     case failed(String)
@@ -49,7 +52,7 @@ public enum DestinationStatus: Equatable, Sendable {
     }
 }
 
-public struct DestinationResult: Equatable, Sendable {
+public struct DestinationResult: Codable, Equatable, Sendable {
     public var destinationId: Destination.ID
     public var destinationName: String
     public var status: DestinationStatus
@@ -66,7 +69,7 @@ public struct DestinationResult: Equatable, Sendable {
     public var duration: TimeInterval { finishedAt.timeIntervalSince(startedAt) }
 }
 
-public struct RunReport: Equatable, Sendable {
+public struct RunReport: Codable, Equatable, Sendable {
     public var jobId: Job.ID
     public var jobName: String
     public var startedAt: Date
@@ -110,12 +113,18 @@ public struct DefaultStorageFactory: StorageFactory {
     }
 }
 
+/// Thrown inside a sync when the preview was declined; never leaves the runner.
+struct SyncDeclined: Error {}
+
 // MARK: - The runner
 
 public final class JobRunner: @unchecked Sendable {
     public var factory: StorageFactory
     /// the clock, so tests get fixed folder names
     public var now: @Sendable () -> Date = { Date() }
+    /// The sync preview (owner decision 1): called with the plan before a sync copies or deletes anything. Return
+    /// false to leave that destination alone — it is reported as skipped. nil = no preview, go straight ahead.
+    public var confirmSync: (@Sendable (Destination, SyncPlan) async -> Bool)?
 
     public init(factory: StorageFactory = DefaultStorageFactory()) { self.factory = factory }
 
@@ -173,6 +182,8 @@ public final class JobRunner: @unchecked Sendable {
             return finish(result.problems.isEmpty ? .finished : .finishedWithProblems)
         } catch is CancellationError {
             return finish(.cancelled)
+        } catch is SyncDeclined {
+            return finish(.skipped("you chose not to go ahead after the preview"))
         } catch let e as DSError {
             return finish(.failed(e.message))
         } catch {
@@ -191,7 +202,9 @@ public final class JobRunner: @unchecked Sendable {
         let plan = Planner.sync(source: src.snapshot, state: state, destination: there, deleteExtras: deleteExtras)
         onEvent(.planned(d.id, summary: plan.summary))
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
-        var progress = Progress(filesTotal: plan.copy.count + plan.delete.count, bytesTotal: plan.bytes)
+        if let confirmSync, !(await confirmSync(d, plan)) { throw SyncDeclined() }
+        try Task.checkCancellation()
+        var progress = RunProgress(filesTotal: plan.copy.count + plan.delete.count, bytesTotal: plan.bytes)
         result.unchanged = plan.unchanged
         state.updatedAt = now()
         defer { Task { try? await Records.saveSyncState(state, to: storage) } }
@@ -260,7 +273,7 @@ public final class JobRunner: @unchecked Sendable {
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
         result.backupFolder = folder
         result.unchanged = plan.unchanged
-        var progress = Progress(filesTotal: plan.copy.count, bytesTotal: plan.bytes)
+        var progress = RunProgress(filesTotal: plan.copy.count, bytesTotal: plan.bytes)
         try await storage.makeDirectory(folder)
         var ok = false
         defer {
@@ -303,7 +316,7 @@ public final class JobRunner: @unchecked Sendable {
     // MARK: one file
 
     private func copyOne(_ file: PlannedFile, from sourceRoot: URL, to storage: Storage, prefix: RelPath,
-                         progress: inout Progress, onEvent: @escaping @Sendable (RunEvent) -> Void, _ id: Destination.ID) async -> FileAction {
+                         progress: inout RunProgress, onEvent: @escaping @Sendable (RunEvent) -> Void, _ id: Destination.ID) async -> FileAction {
         let target = joinPath(prefix, file.path)
         if file.meta.isSymlink {
             do { try await storage.makeSymlink(target, target: file.meta.linkTarget); return .linked }

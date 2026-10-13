@@ -28,7 +28,7 @@ public struct RestoreResult: Equatable, Sendable {
 public enum RestoreEvent: Sendable {
     case planned(RestorePlan)
     case applying(backup: String, index: Int, of: Int)
-    case progress(Progress)
+    case progress(RunProgress)
     case file(RelPath, FileAction)
 }
 
@@ -60,7 +60,7 @@ public enum RestoreEngine {
             }
             let plan = try plan(catalog, point: point)
             onEvent(.planned(plan))
-            var progress = Progress(filesTotal: plan.fileCount, bytesTotal: plan.bytes)
+            var progress = RunProgress(filesTotal: plan.fileCount, bytesTotal: plan.bytes)
             for (i, folder) in plan.chain.enumerated() {
                 try Task.checkCancellation()
                 onEvent(.applying(backup: folder, index: i + 1, of: plan.chain.count))

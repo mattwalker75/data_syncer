@@ -21,7 +21,18 @@ Sources/DataSyncerCore/
   Restore.swift     RestoreEngine: plan a chain, put it back
   Preflight.swift   "Check destinations"
   JobStore.swift    jobs.json in ~/Library/Application Support/Data Syncer/
-Sources/DataSyncer/ the app (step 2)
+  RunHistory.swift  runs.json: every run's report, newest first, capped
+Sources/DataSyncer/
+  DataSyncerApp.swift  the scenes: the main window, the Settings window, the menu commands
+  AppModel.swift       the one object the views watch: jobs, history, settings, the run in progress
+  RunSession.swift     a run as the views see it, built from RunEvents (throttled progress, a capped log)
+  MainWindow.swift     the split view: Sidebar, the toolbar, RunningStrip, the empty state
+  JobDetailView.swift  the selected job: header, source card, DestinationRow list, recent runs
+  Editors.swift        JobEditor, DestinationEditor, FolderPicker (NSOpenPanel, /Volumes)
+  CheckSheet.swift     "Check destinations" (Preflight) and the Full Disk Access shortcut
+  RunScreen.swift      RunOptionsSheet (full/incremental per destination), RunScreen, SyncPreviewSheet
+  SettingsView.swift   General, Appearance, Accounts, Notifications, Run history
+  Formatting.swift     dates/sizes/durations in words, status lines, colours, small shared views
 Tests/DataSyncerCoreTests/  Helpers (Scratch, makeTree, readTree, FixedClock), PlannerTests, RunnerTests
 icon/               icon.svg → make_icns.sh → DataSyncer.icns (committed)
 ```
@@ -66,7 +77,21 @@ chosen folder — files from each backup's `copied` list, folders from its snaps
 `removeDeleted`, removes what each incremental recorded as deleted. A missing or unreadable link in
 the chain is refused with a message naming it; other backups are unaffected.
 
-## Request flow in the app (step 2)
+## The app
 
-The app keeps jobs in `JobStore`, runs a `JobRunner` in a `Task` it can cancel, turns `RunEvent`s
-into the run screen and the "running" strip, and writes each `RunReport` to the run history.
+`AppModel` (main actor) owns the jobs (`JobStore`), the history (`RunHistory`), the settings
+(`settings.json`) and at most one run at a time. **Run…** → `RunOptionsSheet` → `AppModel.start`,
+which makes a `RunSession`, runs a `JobRunner` in a `Task`, and feeds every `RunEvent` to the session
+on the main actor (progress events are throttled to ten a second; the file log keeps the last 400
+lines). The runner's `confirmSync` hook becomes the `SyncPreviewSheet`: the run waits on a
+continuation until the user answers. While a run is going, `screen` can switch back to `.jobs`; the
+`RunningStrip` shows the session and `canRun` is false. When the report arrives it goes into the
+history, a notification is posted (bundled app only) and the sleep-prevention activity ends.
+
+The views never touch disks: every status line ("Synced today 9:14 · 212 copied") is derived from
+the history by `Formatting`. The source folder's size is counted once per job per session by a
+background `Scanner.scan`.
+
+**Development hooks** (environment variables, see DEVELOPMENT.md): `DATASYNCER_HOME` moves the
+jobs/history/settings folder; `DATASYNCER_AUTOSTART=<job name>` starts a run on launch;
+`DATASYNCER_WINDOW=x,y,w,h` places the window.

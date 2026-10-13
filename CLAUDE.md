@@ -16,8 +16,8 @@ The person using it is not a developer — every message is a plain sentence.
   - `Records.swift` — the `.datasyncer` records (README, destination, sync-state, manifests), backup folder names, `BackupCatalog` and chains.
   - `Planner.swift` — pure planning: what a sync or backup will do, before anything is copied.
   - `Runner.swift` — `JobRunner`: checks → plan → copy, one destination after another, with events and cancellation; `StorageFactory`.
-  - `Restore.swift`, `Preflight.swift` (Check destinations), `JobStore.swift` (jobs.json in Application Support).
-- `Sources/DataSyncer/` — the SwiftUI app (step 2). Thin: drives the core, shows its events.
+  - `Restore.swift`, `Preflight.swift` (Check destinations), `JobStore.swift` (jobs.json in Application Support), `RunHistory.swift` (runs.json).
+- `Sources/DataSyncer/` — the SwiftUI app. Thin: `AppModel` drives the core and `RunSession` shows its events; views never touch disks (`Docs/ARCHITECTURE.md` lists the files).
 - `Tests/DataSyncerCoreTests/` — XCTest against throwaway folders (`Scratch`), a fixed clock for folder names.
 - `BUILD_APP.sh` assembles the .app (+ `icon/DataSyncer.icns`, ad-hoc signed); `INSTALL_APP.sh` checks tools, tests, builds, copies to /Applications.
 
@@ -35,4 +35,5 @@ The person using it is not a developer — every message is a plain sentence.
 11. **Cloud services through their own APIs** (Google Drive, Dropbox, OneDrive, S3): no desktop apps; each gets an in-app step-by-step setup guide. Secrets go in the Keychain, never in jobs.json. (Steps 4–5.)
 12. **Scripts**: `-x`/`--long` options + `-h`; idempotent; plain-spoken. **Commits:** one per feature with a dated CHANGELOG entry; explicit `git add <paths>`; never push — Matt pushes.
 13. **Testing:** `swift test`; every engine rule has a test against throwaway folders; never touch the user's real folders or Application Support in tests (`Scratch` + `JobStore(url:)`).
-14. **Design:** Theme 1 "Sidebar" from the mockups (jobs down the left, the selected job's details on the right, Run/Check/Restore in the toolbar, gear + New job at the bottom of the sidebar; a strip on the main window while a job runs with Watch / Cancel run; Settings opens from the gear: General, Appearance (Light/Dark/System, accent, custom themes), Accounts, Notifications, Run history). Icon D.
+14. **Sync preview** is the runner's `confirmSync` hook; the UI answers it with a sheet. Progress events are throttled in `RunSession`, not in the core. Dev hooks `DATASYNCER_HOME` / `DATASYNCER_AUTOSTART` / `DATASYNCER_WINDOW` exist for trying screens without real data — keep them harmless when unset.
+15. **Design:** Theme 1 "Sidebar" from the mockups (jobs down the left, the selected job's details on the right, Run/Check/Restore in the toolbar, gear + New job at the bottom of the sidebar; a strip on the main window while a job runs with Watch / Cancel run; Settings opens from the gear: General, Appearance (Light/Dark/System, accent, custom themes), Accounts, Notifications, Run history). Icon D.

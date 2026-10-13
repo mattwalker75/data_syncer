@@ -315,3 +315,42 @@ final class PreflightAndStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(), [job])
     }
 }
+
+// MARK: - the sync preview and the run history (step 2)
+
+final class HistoryAndPreviewTests: XCTestCase {
+    func testDeclinedPreviewLeavesTheDestinationAlone() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let r = runner(FixedClock())
+        r.confirmSync = { _, plan in plan.copy.count == 0 }   // "no" the first time (one file to copy)
+        let report = await r.run(job) { _ in }
+        XCTAssertEqual(report.results[0].status, .skipped("you chose not to go ahead after the preview"))
+        XCTAssertEqual(readTree(dst), [:])
+        XCTAssertTrue(report.allFine)
+        r.confirmSync = { _, _ in true }
+        let second = await r.run(job) { _ in }
+        XCTAssertEqual(second.results[0].status, .finished)
+        XCTAssertEqual(readTree(dst), ["a.txt": "A"])
+    }
+
+    func testHistoryKeepsNewestFirstAndCapped() throws {
+        let s = Scratch()
+        let h = RunHistory(url: s.root.appendingPathComponent("runs.json"), limit: 3)
+        let jobId = UUID(), destId = UUID()
+        func report(_ t: TimeInterval, _ status: DestinationStatus) -> RunReport {
+            let d = Date(timeIntervalSince1970: t)
+            return RunReport(jobId: jobId, jobName: "Work", startedAt: d, finishedAt: d.addingTimeInterval(5),
+                             results: [DestinationResult(destinationId: destId, destinationName: "Dest", status: status, copied: 2, startedAt: d, finishedAt: d, backupFolder: "x", problems: ["p"])])
+        }
+        for i in 0..<5 { try h.append(report(1_792_000_000 + Double(i) * 60, i == 4 ? .skipped("off") : .failed("boom"))) }
+        let runs = try h.load()
+        XCTAssertEqual(runs.count, 3)
+        XCTAssertEqual(runs.map(\.startedAt.timeIntervalSince1970), [1_792_000_240, 1_792_000_180, 1_792_000_120])
+        XCTAssertEqual(runs.lastRun(of: jobId)?.results[0].status, .skipped("off"))
+        XCTAssertEqual(runs.lastResult(for: destId)?.status, .failed("boom"))   // skipped doesn't count as a run
+        XCTAssertEqual(runs[1].results[0].problems, ["p"])
+        XCTAssertNil(runs.lastRun(of: UUID()))
+    }
+}

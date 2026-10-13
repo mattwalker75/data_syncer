@@ -1,0 +1,36 @@
+// The app: one main window (jobs, or the run screen while a job runs) and the Settings window.
+// Everything the windows show comes from AppModel; everything that copies lives in DataSyncerCore.
+import SwiftUI
+import DataSyncerCore
+
+@main
+struct DataSyncerApp: App {
+    @StateObject private var model = AppModel()
+
+    var body: some Scene {
+        Window("Data Syncer", id: "main") {
+            MainWindow()
+                .environmentObject(model)
+                .preferredColorScheme(model.settings.appearance.colorScheme)
+                .frame(minWidth: 900, minHeight: 600)
+        }
+        .defaultSize(width: 1120, height: 760)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Job…") { model.newJob() }.keyboardShortcut("n")
+            }
+            CommandMenu("Job") {
+                Button("Run…") { model.askToRun() }.keyboardShortcut("r").disabled(!model.canRun)
+                Button("Check Destinations") { model.checkDestinations() }.keyboardShortcut("k").disabled(model.selectedJob == nil)
+                Divider()
+                Button("Cancel Run") { model.cancelRun() }.keyboardShortcut(".").disabled(!model.isRunning)
+            }
+        }
+
+        Settings {
+            SettingsView()
+                .environmentObject(model)
+                .preferredColorScheme(model.settings.appearance.colorScheme)
+        }
+    }
+}

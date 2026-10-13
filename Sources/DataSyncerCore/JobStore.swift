@@ -12,10 +12,16 @@ public struct JobsFile: Codable, Equatable, Sendable {
 public final class JobStore: @unchecked Sendable {
     public let url: URL
 
-    /// The app's own folder, made on first use.
+    /// The app's own folder, made on first use. DATASYNCER_HOME in the environment points it somewhere else
+    /// (for trying the app out without touching the real jobs).
     public static func defaultURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("Data Syncer", isDirectory: true)
+        let dir: URL
+        if let home = ProcessInfo.processInfo.environment["DATASYNCER_HOME"], !home.isEmpty {
+            dir = URL(fileURLWithPath: home, isDirectory: true)
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            dir = base.appendingPathComponent("Data Syncer", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("jobs.json")
     }
