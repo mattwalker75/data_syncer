@@ -201,6 +201,9 @@ struct DestinationRow: View {
         }
         .padding(.horizontal, DS.pad).padding(.vertical, 10)
         .opacity(d.enabled ? 1 : 0.65)
+        // a destination that is on is tinted and carries a bar at its edge; one that is off sits plain
+        .background(d.enabled ? Theme.accent.opacity(0.09) : Color.clear)
+        .overlay(alignment: .leading) { Rectangle().fill(d.enabled ? Theme.accent : Color.clear).frame(width: 3) }
         .contentShape(Rectangle())
     }
 }

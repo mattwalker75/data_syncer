@@ -25,6 +25,8 @@ its records changed.
 - The accent and the good / attention / problem colours have a brighter twin in dark mode (as Apple's
   blue goes from #007AFF to #0A84FF), so links, icon tiles and status text read on a dark ground. Your
   chosen colour is unchanged in the light look.
+- A destination that is turned on is tinted in the accent with a bar at its left edge; one that is off
+  sits plain and dimmed, so the state reads at a glance, not only from the switch.
 - Empty states use the same icon tiles. Check marks are the filled circle symbols.
 - Run and restore screens use the shared cards and stat tiles.
 

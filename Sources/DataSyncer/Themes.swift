@@ -27,8 +27,9 @@ struct ThemeColor: Codable, Hashable {
     static func lifted(_ c: NSColor) -> NSColor {
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 1
         (c.usingColorSpace(.sRGB) ?? c).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-        if s < 0.2 { return NSColor(hue: h, saturation: s, brightness: max(b, 0.72), alpha: 1) }   // greys just come up
-        return NSColor(hue: h, saturation: min(s, 0.78), brightness: max(b, 0.96), alpha: 1)
+        if s < 0.2 { return NSColor(hue: h, saturation: s, brightness: max(b, 0.80), alpha: 1) }   // greys just come up
+        // pale and fully bright: text in this colour has to read on a dark grey, not just a filled button
+        return NSColor(hue: h, saturation: min(s, 0.58), brightness: 1, alpha: 1)
     }
 
     static func == (a: ThemeColor, b: ThemeColor) -> Bool { abs(a.r - b.r) < 1 / 512 && abs(a.g - b.g) < 1 / 512 && abs(a.b - b.b) < 1 / 512 }
