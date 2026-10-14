@@ -23,8 +23,8 @@ struct JobDetailView: View {
         // counted once per job (and again when its source changes); .task(id:) fires for every selected job
         .task(id: "\(job.id)|\(job.sourcePath)") { model.countSource(of: job) }
         .confirmationDialog("Remove the destination “\(destinationToDelete?.name ?? "")” from this job?", isPresented: Binding(get: { destinationToDelete != nil }, set: { if !$0 { destinationToDelete = nil } }), titleVisibility: .visible) {
-            Button("Remove destination", role: .destructive) { if let d = destinationToDelete { model.remove(d, from: job) }; destinationToDelete = nil }
-            Button("Cancel", role: .cancel) { destinationToDelete = nil }
+            Button("Remove destination") { if let d = destinationToDelete { model.remove(d, from: job) }; destinationToDelete = nil }
+            Button("Cancel", role: .cancel) { destinationToDelete = nil }.keyboardShortcut(.defaultAction)
         } message: {
             Text("Nothing at the destination is touched: the copies and backups there stay as they are.")
         }

@@ -2,6 +2,14 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
+## [0.9.4] — 2026-10-14 — readable confirmation buttons
+
+### Fixed
+- "Delete theme", "Delete job", "Remove destination", "Delete backup", "Sign out" and "Clear
+  history" were red text on a red button in their confirmation dialogs (macOS draws a destructive
+  button that way, in both looks). They now read like Cancel, and Cancel is the default button, so
+  Enter and Esc both back out.
+
 ## [0.9.3] — 2026-10-14 — Matt's first look: eight UI changes
 
 ### Added

@@ -131,8 +131,8 @@ struct Sidebar: View {
             .padding(.horizontal, 16).padding(.vertical, 12)
         }
         .confirmationDialog("Delete the job “\(jobToDelete?.name ?? "")”?", isPresented: Binding(get: { jobToDelete != nil }, set: { if !$0 { jobToDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete job", role: .destructive) { if let j = jobToDelete { model.delete(j) }; jobToDelete = nil }
-            Button("Cancel", role: .cancel) { jobToDelete = nil }
+            Button("Delete job") { if let j = jobToDelete { model.delete(j) }; jobToDelete = nil }
+            Button("Cancel", role: .cancel) { jobToDelete = nil }.keyboardShortcut(.defaultAction)
         } message: {
             Text("Only the job is removed from Data Syncer. Nothing at its source or destinations is touched; the backups stay where they are.")
         }

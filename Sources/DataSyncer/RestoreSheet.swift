@@ -56,8 +56,8 @@ struct RestoreSheet: View {
         .onDisappear { if !started, let s = storage { Task { await s.close() } } }
         .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
         .confirmationDialog(deleteTitle, isPresented: Binding(get: { toDelete != nil }, set: { if !$0 { toDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete backup", role: .destructive) { Task { await deleteBackup() } }
-            Button("Cancel", role: .cancel) { toDelete = nil }
+            Button("Delete backup") { Task { await deleteBackup() } }
+            Button("Cancel", role: .cancel) { toDelete = nil }.keyboardShortcut(.defaultAction)
         } message: { Text(deleteMessage) }
     }
 

@@ -1,5 +1,5 @@
 import Foundation
 
 public enum DataSyncerCore {
-    public static let version = "0.9.3"
+    public static let version = "0.9.4"
 }

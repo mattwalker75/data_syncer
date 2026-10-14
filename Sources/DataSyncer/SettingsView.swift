@@ -87,8 +87,8 @@ struct SettingsView: View {
                 Spacer()
                 Button("Clear history…") { confirmClear = true }.disabled(model.history.isEmpty)
                     .confirmationDialog("Forget all \(model.history.count) runs?", isPresented: $confirmClear, titleVisibility: .visible) {
-                        Button("Clear history", role: .destructive) { model.clearHistory() }
-                        Button("Cancel", role: .cancel) {}
+                        Button("Clear history") { model.clearHistory() }
+                        Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
                     } message: { Text("Only Data Syncer's list of past runs is cleared. Nothing at any destination is touched.") }
             }
         }

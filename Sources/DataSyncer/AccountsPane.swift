@@ -110,8 +110,8 @@ struct AccountsPane: View {
         .sheet(item: $adding) { p in CloudAccountSheet(provider: p) { _ in } }
         .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
         .confirmationDialog("Sign out of \(signingOut?.provider.label ?? "") (\(signingOut?.label ?? ""))?", isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }), titleVisibility: .visible) {
-            Button("Sign out", role: .destructive) { if let a = signingOut { model.remove(a) }; signingOut = nil }
-            Button("Cancel", role: .cancel) { signingOut = nil }
+            Button("Sign out") { if let a = signingOut { model.remove(a) }; signingOut = nil }
+            Button("Cancel", role: .cancel) { signingOut = nil }.keyboardShortcut(.defaultAction)
         } message: {
             Text(signingOut.map { "\(uses($0).prefix(1).uppercased() + uses($0).dropFirst()). The sign-in is forgotten; nothing in the service is touched." } ?? "")
         }

@@ -161,8 +161,8 @@ struct DestinationEditor: View {
         }
         .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
         .confirmationDialog("Remove the destination “\(destination?.name ?? "")” from this job?", isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button("Remove destination", role: .destructive) { if let d = destination { model.remove(d, from: job) }; dismiss() }
-            Button("Cancel", role: .cancel) {}
+            Button("Remove destination") { if let d = destination { model.remove(d, from: job) }; dismiss() }
+            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         } message: {
             Text("Nothing at the destination is touched: the copies and backups there stay as they are.")
         }

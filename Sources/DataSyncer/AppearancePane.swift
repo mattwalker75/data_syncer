@@ -72,8 +72,8 @@ struct AppearancePane: View {
         .onAppear { customAccent = model.settings.accent.color; DispatchQueue.main.async { loaded = true } }
         .sheet(item: $editing) { t in ThemeEditor(theme: t) }
         .confirmationDialog("Delete the theme “\(themeToDelete?.name ?? "")”?", isPresented: Binding(get: { themeToDelete != nil }, set: { if !$0 { themeToDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete theme", role: .destructive) { if let t = themeToDelete { delete(t) }; themeToDelete = nil }
-            Button("Cancel", role: .cancel) { themeToDelete = nil }
+            Button("Delete theme") { if let t = themeToDelete { delete(t) }; themeToDelete = nil }
+            Button("Cancel", role: .cancel) { themeToDelete = nil }.keyboardShortcut(.defaultAction)
         }
     }
 
