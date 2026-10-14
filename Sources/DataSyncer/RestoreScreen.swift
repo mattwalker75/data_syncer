@@ -75,11 +75,12 @@ final class RestoreSession: ObservableObject, Identifiable {
 struct RestoreScreen: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var session: RestoreSession
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Restore · \(session.job.name) from \(session.destination.name)").font(.system(size: 15, weight: .semibold))
+                Text("Restore · \(session.job.name) from \(session.destination.name)").font(DS.heading)
                 Spacer()
                 HStack(spacing: 8) {
                     Dot(color: session.outcome.color)
@@ -118,41 +119,42 @@ struct RestoreScreen: View {
                                 return ("Waiting", .secondary)
                             }()
                             HStack {
-                                Text("\(i + 1) · \(folder)").font(.system(size: 13.5, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                                Text("\(i + 1) · \(folder)").font(DS.mono).lineLimit(1).truncationMode(.middle)
                                 Spacer()
                                 Badge(text: state.0, fill: state.1.opacity(0.14), color: state.1)
                             }
                             .padding(10)
-                            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(state.0 == "Applying" ? Theme.accent : Color(nsColor: .separatorColor), lineWidth: state.0 == "Applying" ? 2 : 1))
+                            .background(DS.surface(scheme), in: RoundedRectangle(cornerRadius: DS.radius))
+                            .overlay(RoundedRectangle(cornerRadius: DS.radius).strokeBorder(state.0 == "Applying" ? Theme.accent : DS.edge(scheme), lineWidth: state.0 == "Applying" ? 1.5 : 1))
+                            .shadow(color: DS.shadow(scheme), radius: 3, y: 1)
                         }
                     } else {
-                        Text("Working out the chain…").font(.system(size: 14)).foregroundStyle(.secondary)
+                        Text("Working out the chain…").font(DS.body).foregroundStyle(.secondary)
                     }
                 }
                 if session.isRunning {
-                    Text("Your Mac won't sleep while this runs.").font(.system(size: 13.5)).foregroundStyle(.secondary)
+                    Text("Your Mac won't sleep while this runs.").font(DS.secondary).foregroundStyle(.secondary)
                 }
             }
             .padding(20).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
+        .background(DS.panel(scheme))
     }
 
     private var right: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(session.isRunning ? "Restoring into \(session.target.lastPathComponent)" : "Restore \(session.outcome.sentence)").font(.system(size: 20, weight: .bold))
+                Text(session.isRunning ? "Restoring into \(session.target.lastPathComponent)" : "Restore \(session.outcome.sentence)").font(DS.heading)
                 Text(session.plan?.summary ?? "Checking the destination and the folder to restore into.").foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 10) {
                 ProgressView(value: session.isRunning ? session.progress.fraction : 1)
-                Text(progressText).font(.system(size: 14))
+                Text(progressText).font(DS.body)
             }
-            HStack(spacing: 12) {
-                tile("Restored", session.restored)
-                tile("Removed", session.removed)
-                tile("Problems", session.failed)
+            HStack(spacing: DS.gap) {
+                StatTile(label: "Restored", value: session.restored)
+                StatTile(label: "Removed", value: session.removed)
+                StatTile(label: "Problems", value: session.failed)
             }
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel(session.isRunning ? "Now" : "What happened")
@@ -161,10 +163,10 @@ struct RestoreScreen: View {
             if let r = session.result {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) { Dot(color: session.outcome.color); Text(session.outcome.text).fontWeight(.semibold).foregroundStyle(session.outcome.color) }
-                    if case .failed(let why) = r.status { Text(why).font(.system(size: 14)).textSelection(.enabled) }
-                    ForEach(Array(r.problems.prefix(10).enumerated()), id: \.offset) { Text($0.element).font(.system(size: 13.5)).foregroundStyle(Theme.attention).textSelection(.enabled) }
-                    if r.problems.count > 10 { Text("…and \(r.problems.count - 10) more").font(.system(size: 13.5)).foregroundStyle(.secondary) }
-                    if r.status == .finished { Text("The files are in \(session.target.path).").font(.system(size: 14)) }
+                    if case .failed(let why) = r.status { Text(why).font(DS.body).textSelection(.enabled) }
+                    ForEach(Array(r.problems.prefix(10).enumerated()), id: \.offset) { Text($0.element).font(DS.secondary).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                    if r.problems.count > 10 { Text("…and \(r.problems.count - 10) more").font(DS.secondary).foregroundStyle(.secondary) }
+                    if r.status == .finished { Text("The files are in \(session.target.path).").font(DS.body) }
                 }
             }
             HStack {
@@ -200,11 +202,11 @@ struct RestoreScreen: View {
                         HStack(spacing: 6) {
                             Text(line.path).lineLimit(1).truncationMode(.middle)
                             Text(line.text == "copied" ? "restored" : line.text).foregroundStyle(lineColor(line.action))
-                        }.font(.system(size: 13.5, design: .monospaced)).id(line.id)
+                        }.font(DS.mono).id(line.id)
                     }
                     if session.isRunning, !session.progress.currentPath.isEmpty {
                         HStack(spacing: 6) { Text(session.progress.currentPath).lineLimit(1).truncationMode(.middle); Text("restoring…") }
-                            .font(.system(size: 13.5, design: .monospaced)).foregroundStyle(Theme.accent).id(-1)
+                            .font(DS.mono).foregroundStyle(Theme.accent).id(-1)
                     }
                 }
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading)
@@ -212,17 +214,8 @@ struct RestoreScreen: View {
             .onChange(of: session.log.count) { _, _ in withAnimation(nil) { proxy.scrollTo(session.isRunning ? -1 : session.log.last?.id, anchor: .bottom) } }
         }
         .frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor)))
-    }
-
-    private func tile(_ label: String, _ n: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 12.5)).foregroundStyle(.secondary)
-            Text(Formatting.count(n)).font(.system(size: 20, weight: .bold)).monospacedDigit()
-        }
-        .padding(.horizontal, 14).padding(.vertical, 12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.radius))
+        .overlay(RoundedRectangle(cornerRadius: DS.radius).strokeBorder(DS.edge(scheme)))
     }
 
     private func lineColor(_ a: FileAction) -> Color {

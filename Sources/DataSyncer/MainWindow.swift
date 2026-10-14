@@ -147,21 +147,21 @@ struct SidebarRow: View {
         let running = model.isRunning(job)
         let last = model.history.lastRun(of: job.id)
         HStack(spacing: 10) {
-            Image(systemName: "folder").font(.system(size: 15))
+            Image(systemName: running ? "folder.fill" : "folder").font(.system(size: 15)).foregroundStyle(Theme.accent).frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(job.name).fontWeight(.medium).lineLimit(1)
                     if !running, let last, Formatting.outcome(last).needsAttention { Dot(color: Theme.attention, size: 7) }
                 }
                 if running, let s = model.session {
-                    Text(runningText(s)).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent)
+                    Text(runningText(s)).font(DS.secondary.weight(.semibold)).foregroundStyle(Theme.accent)
                 } else {
-                    Text(subtitle(last)).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subtitle(last)).font(DS.secondary).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             if running { Spacer(); ProgressView().controlSize(.small) }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
         .accessibilityElement(children: .combine)
     }
 
@@ -198,7 +198,7 @@ struct RunningStrip: View {
                     Text(headline).fontWeight(.semibold).foregroundStyle(Theme.accent)
                     HStack(spacing: 10) {
                         ProgressView(value: session.current?.progress.fraction ?? 0).frame(width: 260)
-                        Text(detail).font(.system(size: 13.5)).foregroundStyle(.secondary)
+                        Text(detail).font(DS.secondary).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -253,7 +253,7 @@ struct RestoringStrip: View {
                     HStack(spacing: 10) {
                         ProgressView(value: session.progress.fraction).frame(width: 260)
                         Text(session.progress.filesTotal > 0 ? "\(Formatting.count(session.progress.filesDone)) of \(Formatting.count(session.progress.filesTotal)) files" : "checking…")
-                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                            .font(DS.secondary).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -278,14 +278,14 @@ struct EmptyJobs: View {
     var body: some View {
         VStack(spacing: 12) {
             if model.jobs.isEmpty {
-                Image(systemName: "folder.badge.plus").font(.system(size: 44)).foregroundStyle(.secondary)
-                Text("No jobs yet").font(.title2).fontWeight(.semibold)
+                IconTile(systemName: "folder.badge.plus", size: 64)
+                Text("No jobs yet").font(DS.heading)
                 Text("A job copies one folder on this Mac to one or more destinations, when you run it.\nMake your first one to get started.")
                     .multilineTextAlignment(.center).foregroundStyle(.secondary)
                 Button("New job…") { model.newJob() }.buttonStyle(.borderedProminent)
             } else {
-                Image(systemName: "sidebar.left").font(.system(size: 44)).foregroundStyle(.secondary)
-                Text("Choose a job on the left").font(.title2).fontWeight(.semibold)
+                IconTile(systemName: "sidebar.left", color: .secondary, size: 64)
+                Text("Choose a job on the left").font(DS.heading)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -301,7 +301,7 @@ struct RunDetailsSheet: View {
     var body: some View {
         let o = Formatting.outcome(report)
         VStack(alignment: .leading, spacing: 14) {
-            Text("\(report.jobName) — \(Formatting.When(report.startedAt))").font(.title2).fontWeight(.bold)
+            Text("\(report.jobName) — \(Formatting.When(report.startedAt))").font(DS.heading)
             HStack(spacing: 8) {
                 Dot(color: o.color); Text(o.text).fontWeight(.semibold).foregroundStyle(o.color)
                 Text("· \(Formatting.duration(report.finishedAt.timeIntervalSince(report.startedAt)))").foregroundStyle(.secondary)
@@ -311,11 +311,11 @@ struct RunDetailsSheet: View {
                     ForEach(report.results, id: \.destinationId) { d in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(Formatting.line(for: d)).fontWeight(.medium)
-                            if let f = d.backupFolder { Text(f).font(.system(size: 13.5, design: .monospaced)).foregroundStyle(.secondary) }
+                            if let f = d.backupFolder { Text(f).font(DS.mono).foregroundStyle(.secondary) }
                             if d.unchanged > 0 || d.skipped > 0 {
-                                Text("\(Formatting.count(d.unchanged)) unchanged · \(Formatting.count(d.skipped)) skipped · \(Formatting.bytes(d.bytes)) · \(Formatting.duration(d.duration))").font(.system(size: 13.5)).foregroundStyle(.secondary)
+                                Text("\(Formatting.count(d.unchanged)) unchanged · \(Formatting.count(d.skipped)) skipped · \(Formatting.bytes(d.bytes)) · \(Formatting.duration(d.duration))").font(DS.secondary).foregroundStyle(.secondary)
                             }
-                            ForEach(Array(d.problems.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 13.5)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                            ForEach(Array(d.problems.enumerated()), id: \.offset) { Text($0.element).font(DS.secondary).foregroundStyle(Theme.attention).textSelection(.enabled) }
                         }
                     }
                 }

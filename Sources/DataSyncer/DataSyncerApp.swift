@@ -13,7 +13,7 @@ struct DataSyncerApp: App {
                 .environmentObject(model)
                 .preferredColorScheme(model.lookInForce.colorScheme)
                 .tint(Theme.accent)
-                .font(.system(size: 14))
+                .font(DS.body)
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 1120, height: 760)
@@ -37,7 +37,7 @@ struct DataSyncerApp: App {
                 .environmentObject(model)
                 .preferredColorScheme(model.lookInForce.colorScheme)
                 .tint(Theme.accent)
-                .font(.system(size: 14))
+                .font(DS.body)
         }
     }
 }

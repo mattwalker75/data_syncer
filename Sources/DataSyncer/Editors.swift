@@ -42,7 +42,7 @@ struct JobEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(job == nil ? "New job" : "Rename, or change the source").font(.title2).fontWeight(.bold)
+            Text(job == nil ? "New job" : "Rename, or change the source").font(DS.heading)
             Form {
                 Field("Name", $name, "Work documents")
                 LabeledContent("Source folder") {
@@ -54,12 +54,12 @@ struct JobEditor: View {
                     }
                 }
                 Text("The source is always a folder on this Mac, and it is the truth: copying only ever goes from it to the destinations.")
-                    .font(.system(size: 13.5)).foregroundStyle(.secondary)
-                if let problem { HStack(spacing: 6) { Dot(color: Theme.problem); Text(problem) }.font(.system(size: 14)) }
+                    .font(DS.secondary).foregroundStyle(.secondary)
+                if let problem { HStack(spacing: 6) { Dot(color: Theme.problem); Text(problem) }.font(DS.body) }
             }
             .formStyle(.grouped)
             HStack {
-                if job != nil { Text("Destinations are added on the job's page.").font(.system(size: 13.5)).foregroundStyle(.secondary) }
+                if job != nil { Text("Destinations are added on the job's page.").font(DS.secondary).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(job == nil ? "Add job" : "Save") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)

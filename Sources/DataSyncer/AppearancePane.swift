@@ -34,7 +34,7 @@ struct AppearancePane: View {
                 }
                 HStack {
                     Text("Your own theme sets the look, the accent, the good / attention / problem colours, and tints for the sidebar and cards.")
-                        .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                        .font(DS.secondary).foregroundStyle(.secondary)
                     Spacer()
                     Button("New…") { editing = CustomTheme(name: "", look: model.settings.appearance, accent: model.settings.accent) }
                         .help("Make a theme of your own")
@@ -65,7 +65,7 @@ struct AppearancePane: View {
                 Text(model.settings.activeTheme != nil
                      ? "The theme “\(model.settings.activeTheme!.name)” sets the accent. Choose Light, Dark or Follow the system above to pick one here."
                      : "\(accentName) — buttons, the selected job, badges and progress bars.")
-                    .font(.system(size: 14)).foregroundStyle(.secondary)
+                    .font(DS.body).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -85,7 +85,7 @@ struct AppearancePane: View {
             Image(systemName: on ? "checkmark.circle.fill" : "circle").foregroundStyle(on ? Theme.accent : Color.secondary)
             Text(name).fontWeight(on ? .semibold : .regular)
             extra()
-            if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1) }
+            if let detail { Text(detail).font(DS.secondary).foregroundStyle(.secondary).lineLimit(1) }
             Spacer()
             trailing()
         }
@@ -122,7 +122,7 @@ struct ThemeEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(theme.name.isEmpty ? "New theme" : "Edit “\(theme.name)”").font(.title2).fontWeight(.bold)
+            Text(theme.name.isEmpty ? "New theme" : "Edit “\(theme.name)”").font(DS.heading)
             Form {
                 Field("Name", $theme.name, "Midnight")
                 Picker("Look", selection: $theme.look) { ForEach(Appearance.allCases, id: \.self) { Text($0.label).tag($0) } }
@@ -142,7 +142,7 @@ struct ThemeEditor: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("The main window shows the theme while you adjust it.").font(.system(size: 13.5)).foregroundStyle(.secondary)
+                Text("The main window shows the theme while you adjust it.").font(DS.secondary).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save and use") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
@@ -172,7 +172,7 @@ struct ThemeEditor: View {
             Spacer()
             Button("Run…") {}.buttonStyle(.borderedProminent).tint(accent).allowsHitTesting(false).accessibilityHidden(true)
         }
-        .font(.system(size: 14))
+        .font(DS.body)
     }
 
     private var built: CustomTheme {

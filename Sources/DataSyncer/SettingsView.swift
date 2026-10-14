@@ -29,13 +29,13 @@ struct SettingsView: View {
             LabeledContent("Data Syncer") { Text(DataSyncerCore.version) }
             LabeledContent("Jobs and settings") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.store.url.deletingLastPathComponent().path).font(.system(size: 13.5, design: .monospaced)).textSelection(.enabled)
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.store.url]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 13.5))
+                    Text(model.store.url.deletingLastPathComponent().path).font(DS.mono).textSelection(.enabled)
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.store.url]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(DS.secondary)
                 }
             }
             Section("Reading protected folders") {
                 Text("If a source is in Desktop, Documents, Downloads or another folder macOS protects and a run says it can't be read, give Data Syncer Full Disk Access.")
-                    .font(.system(size: 14)).foregroundStyle(.secondary)
+                    .font(DS.body).foregroundStyle(.secondary)
                 Button("Open Privacy & Security settings…") { FullDiskAccess.openSettings() }
             }
         }
@@ -51,7 +51,7 @@ struct SettingsView: View {
             Toggle("Notify me when a run finishes", isOn: $model.settings.notifyWhenFinished)
                 .onChange(of: model.settings.notifyWhenFinished) { _, on in if on { model.requestNotificationPermission() } }
             Text("A notification with a short summary — what was copied, and any problems — when a job finishes, whether or not Data Syncer is in front.")
-                .font(.system(size: 14)).foregroundStyle(.secondary)
+                .font(DS.body).foregroundStyle(.secondary)
             if !model.notificationStatus.isEmpty {
                 LabeledContent("Notifications are") { Text(model.notificationStatus) }
                 if model.notificationStatus.contains("turned off") {
@@ -67,7 +67,7 @@ struct SettingsView: View {
             if model.history.isEmpty {
                 Text("No runs yet.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text("Double-click a run to see what happened.").font(.system(size: 13)).foregroundStyle(.secondary)
+                Text("Double-click a run to see what happened.").font(DS.secondary).foregroundStyle(.secondary)
                 Table(model.history, selection: $selectedRun) {
                     TableColumn("When") { r in Text(Formatting.When(r.startedAt)) }.width(120)
                     TableColumn("Job", value: \.jobName)
@@ -83,7 +83,7 @@ struct SettingsView: View {
                 .sheet(item: $showingRun) { RunDetailsSheet(report: $0) }
             }
             HStack {
-                Text("\(model.history.count) run\(model.history.count == 1 ? "" : "s") kept (the newest 500).").font(.system(size: 13.5)).foregroundStyle(.secondary)
+                Text("\(model.history.count) run\(model.history.count == 1 ? "" : "s") kept (the newest 500).").font(DS.secondary).foregroundStyle(.secondary)
                 Spacer()
                 Button("Clear history…") { confirmClear = true }.disabled(model.history.isEmpty)
                     .confirmationDialog("Forget all \(model.history.count) runs?", isPresented: $confirmClear, titleVisibility: .visible) {

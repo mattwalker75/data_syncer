@@ -2,7 +2,29 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
-## [0.9.4] — 2026-10-14 — readable confirmation buttons
+## [0.9.5] — 2026-10-14 — the professional look
+
+A visual pass modelled on what current Mac utilities do (System Settings, Carbon Copy Cloner, Arq,
+CleanShot) and Apple's Human Interface Guidelines. Nothing about what the app does, its settings or
+its records changed.
+
+### Changed
+- One type scale, in `Design.swift`: title 24 bold, headings 17 semibold, section headings 14
+  semibold title-case (no more tracked uppercase), body 14, secondary 13, logs 12.5 monospaced, big
+  numbers 22 — five sizes instead of nine. Paths in lists use the normal typeface; only logs and
+  backup folder names stay monospaced.
+- Surfaces: cards are white with a hairline edge and a faint shadow in light mode; in dark mode they
+  are a lifted grey with no shadow (surfaces come forward by getting lighter, as Apple does). Panels
+  (the run screen's left column) are sunken instead of tinted. A theme's card tint still shows,
+  more quietly.
+- The job page: the source and each destination carry an icon tile (a rounded square with the
+  symbol, like System Settings rows); destinations are one grouped card with inset hairlines
+  instead of separate floating cards; recent runs are a grouped list with a status dot, a hover
+  highlight and a chevron.
+- Sidebar rows: the folder symbol in the accent colour, a touch more height.
+- Empty states use the same icon tiles. Check marks are the filled circle symbols.
+- Run and restore screens use the shared cards and stat tiles.
+
 
 ### Fixed
 - "Delete theme", "Delete job", "Remove destination", "Delete backup", "Sign out" and "Clear

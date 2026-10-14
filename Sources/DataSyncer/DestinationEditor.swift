@@ -72,7 +72,7 @@ struct DestinationEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(destination == nil ? "New destination" : "Edit destination").font(.title2).fontWeight(.bold)
+            Text(destination == nil ? "New destination" : "Edit destination").font(DS.heading)
             Form {
                 Section {
                     Field("Name", $name, kind == .usb ? "Backup drive" : "Second copy")
@@ -100,7 +100,7 @@ struct DestinationEditor: View {
                     Text(includeSourceFolder
                          ? "The destination gets a folder named “\(sourceName)” with everything in it: \(exampleTarget)/\(sourceName)/…" + (destination?.copiesSourceFolder == true ? "" : " Changing this on a destination that already has copies makes the old layout look like extra files — a sync will offer to delete them, a backup chain starts over.")
                          : "Only the files and folders inside the source go in: \(exampleTarget)/…" + (destination?.copiesSourceFolder == true ? " Changing this on a destination that already has copies makes the old layout look like extra files — a sync will offer to delete them, a backup chain starts over." : ""))
-                        .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                        .font(DS.secondary).foregroundStyle(.secondary)
                 }
                 Section("How") {
                     Picker("Mode", selection: $mode) { ForEach(ModeChoice.allCases) { Text($0.rawValue).tag($0) } }
@@ -108,11 +108,11 @@ struct DestinationEditor: View {
                     case .sync:
                         Toggle("Delete files at the destination that the source no longer has", isOn: $deleteExtras)
                         Text("The destination is made to match the source. You see a preview of what will be copied and deleted before anything happens.")
-                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                            .font(DS.secondary).foregroundStyle(.secondary)
                     case .fullOnly:
                         Field("Backup title", $backupTitle, job.name)
                         Text("Every run makes a new dated folder with a complete copy: \(BackupNaming.folderName(kind: .full, title: BackupNaming.sanitizeTitle(backupTitle.isEmpty ? job.name : backupTitle), date: Date())). Old backups are never deleted by Data Syncer.")
-                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                            .font(DS.secondary).foregroundStyle(.secondary)
                     case .fullIncremental:
                         Field("Backup title", $backupTitle, job.name)
                         Picker("Incrementals are measured", selection: $chainStart) {
@@ -126,7 +126,7 @@ struct DestinationEditor: View {
                             }
                         }
                         Text("After \(maxIncrementals) incrementals the next backup has to be a full one. When you run, you choose full or incremental for this destination.")
-                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                            .font(DS.secondary).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -143,7 +143,7 @@ struct DestinationEditor: View {
                             .help("Creates the destination folder in the service — the one thing Data Syncer only does when you ask")
                     }
                     if let r = testResult {
-                        HStack(spacing: 6) { Dot(color: r.ok ? Theme.good : Theme.problem); Text(r.text).font(.system(size: 13.5)).lineLimit(2) }
+                        HStack(spacing: 6) { Dot(color: r.ok ? Theme.good : Theme.problem); Text(r.text).font(DS.secondary).lineLimit(2) }
                             .frame(maxWidth: 360, alignment: .leading).help(r.text)
                     }
                 }
@@ -290,7 +290,7 @@ struct DestinationEditor: View {
         }
     }
 
-    private func note(_ s: String) -> some View { Text(s).font(.system(size: 13.5)).foregroundStyle(.secondary) }
+    private func note(_ s: String) -> some View { Text(s).font(DS.secondary).foregroundStyle(.secondary) }
 
     private func useConfig(_ h: SSHConfigHost) {
         host = h.hostName ?? h.alias

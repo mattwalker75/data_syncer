@@ -21,7 +21,7 @@ struct CloudAccountSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Add a \(provider.label) account").font(.title2).fontWeight(.bold)
+            Text("Add a \(provider.label) account").font(DS.heading)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     guide
@@ -31,10 +31,10 @@ struct CloudAccountSheet: View {
             }
             HStack {
                 if let s = status {
-                    HStack(spacing: 6) { Dot(color: s.ok ? Theme.good : Theme.problem); Text(s.text).font(.system(size: 13.5)).lineLimit(3) }
+                    HStack(spacing: 6) { Dot(color: s.ok ? Theme.good : Theme.problem); Text(s.text).font(DS.secondary).lineLimit(3) }
                         .frame(maxWidth: 420, alignment: .leading).help(s.text)
                 } else if working {
-                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(provider == .s3 ? "Saving…" : "Waiting for the sign-in in your browser…").font(.system(size: 13.5)).foregroundStyle(.secondary) }
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(provider == .s3 ? "Saving…" : "Waiting for the sign-in in your browser…").font(DS.secondary).foregroundStyle(.secondary) }
                 }
                 Spacer()
                 Button("Cancel") { task?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
@@ -61,15 +61,15 @@ struct CloudAccountSheet: View {
     private var guide: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel("One-time setup")
-            Text(intro).font(.system(size: 14)).foregroundStyle(.secondary)
+            Text(intro).font(DS.body).foregroundStyle(.secondary)
             ForEach(Array(steps.enumerated()), id: \.offset) { i, step in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(i + 1).").font(.system(size: 14, weight: .semibold)).frame(width: 18, alignment: .trailing)
-                    Text(step).font(.system(size: 14)).textSelection(.enabled)
+                    Text("\(i + 1).").font(DS.body.weight(.semibold)).frame(width: 18, alignment: .trailing)
+                    Text(step).font(DS.body).textSelection(.enabled)
                 }
             }
             if let (title, url) = link {
-                Button(title) { NSWorkspace.shared.open(url) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 14))
+                Button(title) { NSWorkspace.shared.open(url) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(DS.body)
             }
         }
         .padding(14)
@@ -143,7 +143,7 @@ struct CloudAccountSheet: View {
                 Field("Name for this account", $label, "optional — e.g. “my AWS”")
             }
             Text(provider == .s3 ? "The secret key goes in your Keychain." : "The browser window that opens is the service's own sign-in; Data Syncer never sees your password. Tokens go in your Keychain.")
-                .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                .font(DS.secondary).foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
     }
