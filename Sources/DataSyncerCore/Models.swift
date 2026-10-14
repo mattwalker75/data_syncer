@@ -150,6 +150,18 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
 
     public var sourceURL: URL { URL(fileURLWithPath: (sourcePath as NSString).expandingTildeInPath, isDirectory: true) }
 
+    /// A copy of the job renamed to `newName` whose backup destinations keep the titles they had (the title
+    /// defaults to the job's name, so a plain rename would start a new backup family and orphan the old one).
+    public func renamed(_ newName: String) -> Job {
+        var j = self
+        for i in j.destinations.indices where j.destinations[i].backupTitle.trimmingCharacters(in: .whitespaces).isEmpty {
+            if case .sync = j.destinations[i].mode { continue }
+            j.destinations[i].backupTitle = name
+        }
+        j.name = newName
+        return j
+    }
+
     /// The title used in a destination's backup folder names.
     public func backupTitle(for destination: Destination) -> String {
         let raw = destination.backupTitle.trimmingCharacters(in: .whitespaces)

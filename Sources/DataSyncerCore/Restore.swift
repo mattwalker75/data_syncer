@@ -118,7 +118,8 @@ public enum RestoreEngine {
                 if removeDeleted {
                     for path in manifest.deleted.sorted(by: { $0.count > $1.count }) {
                         let local = target.appendingPathComponent(path)
-                        guard inside(local) else { result.problems.append("\(path): leads outside the restore folder, left alone"); continue }
+                        // the parent must be inside; the entry itself may be a link (removing a link never follows it)
+                        guard inside(local.deletingLastPathComponent()) else { result.problems.append("\(path): leads outside the restore folder, left alone"); continue }
                         if LocalStorage.meta(at: local) != nil {
                             do { try fm.removeItem(at: local); result.removed += 1; onEvent(.file(path, .deleted)) }
                             catch { result.problems.append("\(path): could not remove — \(error.localizedDescription)") }

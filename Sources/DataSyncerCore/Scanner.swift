@@ -21,7 +21,9 @@ public enum Scanner {
         guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else {
             throw DSError("The source folder \(root.path) isn't there.")
         }
-        guard fm.isReadableFile(atPath: root.path) else {
+        // access() says yes for folders macOS protects (Desktop, Documents without Full Disk Access) and for
+        // read-only-no-search folders; only an actual listing proves the root can be read
+        guard fm.isReadableFile(atPath: root.path), (try? fm.contentsOfDirectory(atPath: root.path)) != nil else {
             throw DSError("The source folder \(root.path) can't be read. If it is in Desktop, Documents or another folder macOS protects, give Data Syncer Full Disk Access in System Settings → Privacy & Security.")
         }
         var snapshot: Snapshot = [:]
@@ -46,6 +48,10 @@ public enum Scanner {
             if meta.isSymlink { enumerator.skipDescendants() } // a link to a folder is copied as a link, not followed
             snapshot[rel] = meta
             if !meta.isDirectory && !meta.isSymlink { files += 1; bytes += meta.size }
+        }
+        // a problem at the root itself means nothing below it was seen: that is a failed scan, not an empty source
+        if problems.contains(where: { $0.0.isEmpty }) {
+            throw DSError("The source folder \(root.path) could not be listed: \(problems.first { $0.0.isEmpty }!.1) If it is in Desktop, Documents or another folder macOS protects, give Data Syncer Full Disk Access in System Settings → Privacy & Security.")
         }
         return Result(snapshot: snapshot, fileCount: files, totalBytes: bytes, problems: problems)
     }

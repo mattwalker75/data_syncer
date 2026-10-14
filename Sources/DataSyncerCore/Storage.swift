@@ -188,6 +188,7 @@ public final class LocalStorage: Storage, @unchecked Sendable {
     }
 
     public func readData(_ path: RelPath) async throws -> Data {
+        try guardInside(url(path).deletingLastPathComponent(), path)
         do { return try Data(contentsOf: url(path)) } catch {
             throw DSError("Could not read \(path): \(error.localizedDescription)")
         }
@@ -195,6 +196,7 @@ public final class LocalStorage: Storage, @unchecked Sendable {
 
     public func writeData(_ data: Data, to path: RelPath) async throws {
         let dest = url(path)
+        try guardInside(dest.deletingLastPathComponent(), path)
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         do { try data.write(to: dest, options: .atomic) } catch {
             throw DSError("Could not write \(path): \(error.localizedDescription)")
@@ -222,7 +224,7 @@ public final class LocalStorage: Storage, @unchecked Sendable {
     /// Copies into a temporary name beside the target and renames over it only when the copy is complete, so
     /// the old copy survives a failure or a cancel and nothing half-written is ever left under the real name.
     public static func copyReplacing(from src: URL, to dst: URL, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) throws {
-        let tmp = dst.deletingLastPathComponent().appendingPathComponent(".\(dst.lastPathComponent).datasyncer-part")
+        let tmp = dst.deletingLastPathComponent().appendingPathComponent(LocalStorage.partName(for: dst.lastPathComponent))
         do {
             try copyFile(from: src, to: tmp, progress: progress)
             try apply(meta, to: tmp)
@@ -264,7 +266,21 @@ public final class LocalStorage: Storage, @unchecked Sendable {
     /// Modified date and permissions, as the source had them.
     public static func apply(_ meta: FileMeta, to url: URL) throws {
         var attrs: [FileAttributeKey: Any] = [.modificationDate: Date(timeIntervalSince1970: meta.modified)]
-        if let p = meta.permissions { attrs[.posixPermissions] = Int(p) }
+        // a folder keeps its source's mode but never loses the owner's write and search bits: a read-only source
+        // folder (0555) must not make its copy unwritable for the next run, or a backup undeletable
+        if let p = meta.permissions { attrs[.posixPermissions] = meta.isDirectory ? Int(p) | 0o700 : Int(p) }
         try? FileManager.default.setAttributes(attrs, ofItemAtPath: url.path)
+    }
+
+    /// The temporary name a copy lands under beside its target: ".<name>.datasyncer-part", shortened when the
+    /// file name is so long that the suffix would push it past the file system's 255-byte limit.
+    static func partName(for name: String) -> String {
+        let suffix = ".datasyncer-part"
+        let full = "." + name + suffix
+        if full.utf8.count <= 255 { return full }
+        var head = name
+        while ("." + head + suffix).utf8.count > 255 - 9 { head.removeLast() }   // room for a short hash
+        let hash = String(format: "%08x", name.utf8.reduce(UInt32(5381)) { ($0 &* 33) &+ UInt32($1) })
+        return "." + head + "-" + hash + suffix
     }
 }

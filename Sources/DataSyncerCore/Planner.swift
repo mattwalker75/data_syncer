@@ -25,6 +25,8 @@ public struct SyncPlan: Equatable, Sendable {
     public var bytes: Int64 = 0
     /// deletions that were NOT planned because the source could not be read there
     public var heldBack = 0
+    /// dated backup folders found at the destination and left alone
+    public var backupsHeld = 0
     /// a plain warning when the plan looks like a mistake (an empty source, deleting most of the destination);
     /// the preview shows it, and a run without a preview refuses to go ahead
     public var warning: String?
@@ -38,6 +40,7 @@ public struct SyncPlan: Equatable, Sendable {
         if parts.isEmpty { return "nothing to do — already in sync" }
         var s = parts.joined(separator: ", ") + " · \(unchanged) unchanged"
         if heldBack > 0 { s += " · \(heldBack) deletion\(heldBack == 1 ? "" : "s") held back (source unreadable there)" }
+        if backupsHeld > 0 { s += " · \(backupsHeld) backup folder\(backupsHeld == 1 ? "" : "s") left alone" }
         return s
     }
 }
@@ -45,6 +48,7 @@ public struct SyncPlan: Equatable, Sendable {
 /// Is `path` at or under one of the paths the scan could not read?
 func isUnder(_ path: RelPath, _ unreadable: Set<RelPath>) -> Bool {
     if unreadable.isEmpty { return false }
+    if unreadable.contains("") { return true }   // the root itself: everything is under it
     if unreadable.contains(path) { return true }
     var p = (path as NSString).deletingLastPathComponent
     while !p.isEmpty { if unreadable.contains(p) { return true }; p = (p as NSString).deletingLastPathComponent }
@@ -116,33 +120,51 @@ public enum Planner {
             if needs { plan.copy.append(PlannedFile(path: path, meta: meta)); if !meta.isSymlink { plan.bytes += meta.size } }
             else { plan.unchanged += 1 }
         }
+        // a copy at the destination whose name differs only in case from a source path (a rename) must go first:
+        // on a case-insensitive disk the new file would otherwise keep the old name and be copied every run
+        if let destination {
+            let sourceLower = Dictionary(source.keys.map { ($0.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+            for path in destination.keys where source[path] == nil {
+                if let match = sourceLower[path.lowercased()], match != path { inTheWay.insert(path) }
+            }
+        }
         // what is in the way goes before the folders are made; anything under a replaced folder goes with it
         plan.replace = deepestFirst(inTheWay)
         if deleteExtras {
             let known: Set<RelPath> = destination.map { Set($0.keys) } ?? Set(state?.files.keys ?? [:].keys)
-            var extras = known.subtracting(source.keys)
+            var extras = known.subtracting(source.keys).subtracting(inTheWay)
             let held = extras.filter { isUnder($0, unreadable) }
             plan.heldBack = held.count
             extras.subtract(held)
             extras = extras.filter { e in !inTheWay.contains { e.hasPrefix($0 + "/") } }
+            // dated backup folders at the destination are never "extras": a destination switched from backups
+            // to sync must not quietly delete its own backups
+            let backups = Set(extras.filter { !$0.contains("/") && BackupNaming.parse($0) != nil })
+            if !backups.isEmpty {
+                extras = extras.filter { e in !backups.contains(e) && !backups.contains { e.hasPrefix($0 + "/") } }
+                plan.backupsHeld = backups.count
+            }
             plan.delete = deepestFirst(extras)
-            // a wipe that is probably a mistake: an empty source, or most of the destination going
+            // a wipe that is probably a mistake: an empty source, or most of the destination going (files only, both sides)
             let sourceFiles = source.values.filter { !$0.isDirectory }.count
             let knownFiles = (destination ?? [:]).values.filter { !$0.isDirectory }.count
+            let deletingFiles = plan.delete.filter { destination?[$0]?.isDirectory != true }.count
             if sourceFiles == 0 && !plan.delete.isEmpty {
                 plan.warning = "The source has no files at all, so this sync would delete everything at the destination (\(plan.delete.count) items). If the source is a drive or share that isn't connected, connect it first."
-            } else if knownFiles >= 20 && plan.delete.count * 2 > knownFiles {
-                plan.warning = "This sync would delete \(plan.delete.count) of the \(knownFiles) files at the destination. Check that the source is the right folder before going ahead."
+            } else if knownFiles >= 20 && deletingFiles * 2 > knownFiles {
+                plan.warning = "This sync would delete \(deletingFiles) of the \(knownFiles) files at the destination. Check that the source is the right folder before going ahead."
+            }
+            if plan.backupsHeld > 0 {
+                plan.warning = (plan.warning.map { $0 + " " } ?? "") + "This folder also holds \(plan.backupsHeld) Data Syncer backup\(plan.backupsHeld == 1 ? "" : "s"), which a sync never deletes — if you no longer want them, delete them in Finder or in Restore…"
             }
         }
         return plan
     }
 
     /// What a backup folder will hold. For an incremental, `parent` is the manifest it is measured against.
-    public static func backup(kind: BackupChoice, folderName: String, source: Snapshot, parent: Manifest?,
+    public static func backup(kind: BackupChoice, folderName: String, source: Snapshot, parent: Manifest?, parentFolder: String? = nil,
                               unreadable: Set<RelPath> = []) -> BackupPlan {
-        var plan = BackupPlan(kind: kind, folderName: folderName, basedOn: parent.map { _ in "" }, snapshot: source)
-        plan.basedOn = nil
+        var plan = BackupPlan(kind: kind, folderName: folderName, basedOn: kind == .incremental ? parentFolder : nil, snapshot: source)
         let base = kind == .incremental ? (parent?.snapshot ?? [:]) : [:]
         for path in source.keys.sorted() {
             let meta = source[path]!

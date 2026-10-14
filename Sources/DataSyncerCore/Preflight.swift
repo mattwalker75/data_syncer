@@ -34,7 +34,7 @@ public enum Preflight {
     }
 
     /// One destination: reachable, the folder there and writable, free space, and what backups it already holds.
-    public static func check(_ job: Job, _ d: Destination, factory: StorageFactory = DefaultStorageFactory(), otherJobIds: Set<UUID> = []) async -> DestinationCheck {
+    public static func check(_ job: Job, _ d: Destination, factory: StorageFactory = DefaultStorageFactory(), otherJobIds: Set<UUID>? = nil) async -> DestinationCheck {
         var out = DestinationCheck(destinationId: d.id, items: [])
         let storage: Storage
         do {
@@ -66,7 +66,7 @@ public enum Preflight {
             out.items.append(CheckItem(name: "Free space", ok: true, detail: ByteCount.string(free)))
         }
         if let record = try? await Records.loadDestinationRecord(from: storage), record.destinationId != d.id {
-            let other = otherJobIds.contains(record.jobId) || record.jobId == job.id
+            let other = record.jobId == job.id ? job.destinations.contains { $0.id == record.destinationId } : (otherJobIds?.contains(record.jobId) ?? true)
             out.items.append(CheckItem(name: "Folder in use", ok: !other,
                                        detail: other ? "already used by the job “\(record.jobName)” (destination “\(record.destinationName)”) — two jobs can't share one folder"
                                                      : "was used by a job that no longer exists (“\(record.jobName)”); it will be taken over"))

@@ -70,7 +70,7 @@ final class PlannerTests: XCTestCase {
         let plan = Planner.backup(kind: .full, folderName: "F", source: ["a.txt": file, "sub": dir, "sub/b.txt": file], parent: nil)
         XCTAssertEqual(plan.copy.count, 2)
         XCTAssertEqual(plan.makeDirs, ["sub"])
-        XCTAssertNil(plan.basedOn)
+        XCTAssertNil(plan.basedOn)   // no parent folder given
         XCTAssertEqual(plan.deleted, [])
     }
 

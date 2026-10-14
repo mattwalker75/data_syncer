@@ -60,7 +60,9 @@ public enum Records {
     /// A folder already used by another destination (of this or another job) is refused: two jobs mirroring one
     /// folder would erase each other's files. `otherJobIds` are the jobs that still exist besides this one; a
     /// record from a job that no longer exists is simply taken over.
-    public static func ensure(on storage: Storage, job: Job, destination: Destination, otherJobIds: Set<UUID> = []) async throws {
+    /// `otherJobIds` nil = unknown: then any other job's folder is refused (a tool that cannot say which jobs
+    /// exist must never take one over by accident).
+    public static func ensure(on storage: Storage, job: Job, destination: Destination, otherJobIds: Set<UUID>? = nil) async throws {
         let readme = joinPath(folderName, "README.txt")
         if try await !storage.exists(readme) {
             try await storage.makeDirectory(folderName)
@@ -68,14 +70,22 @@ public enum Records {
         }
         let path = joinPath(folderName, "destination.json")
         if let existing = try await loadDestinationRecord(from: storage) {
-            if existing.destinationId == destination.id { return }
-            if existing.jobId == job.id {
+            if existing.destinationId == destination.id {
+                // ours: keep the record current (job renamed, mode changed) so messages name the right things
+                if existing.jobName != job.name || existing.mode != destination.mode.label || existing.destinationName != destination.name {
+                    var updated = existing
+                    updated.jobName = job.name; updated.destinationName = destination.name; updated.mode = destination.mode.label
+                    try await storage.writeData(try encoder.encode(updated), to: path)
+                }
+                return
+            }
+            if existing.jobId == job.id, job.destinations.contains(where: { $0.id == existing.destinationId }) {
                 throw DSError("This folder is already used by another destination of this job (“\(existing.destinationName)”). Two destinations can't share one folder — give this one a folder of its own.")
             }
-            if otherJobIds.contains(existing.jobId) {
+            if existing.jobId != job.id, otherJobIds?.contains(existing.jobId) ?? true {
                 throw DSError("This folder is already used by the job “\(existing.jobName)” (destination “\(existing.destinationName)”). Two jobs can't share one folder — a sync would erase the other job's files. Give this destination a folder of its own.")
             }
-            // the job that used it is gone: take the folder over
+            // the job or destination that used it is gone: take the folder over
         }
         let record = DestinationRecord(jobId: job.id, jobName: job.name, destinationId: destination.id,
                                        destinationName: destination.name, mode: destination.mode.label, since: Date())

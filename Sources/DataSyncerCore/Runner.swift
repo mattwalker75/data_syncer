@@ -222,8 +222,9 @@ public final class JobRunner: @unchecked Sendable {
     }
 
     /// The jobs that exist besides the one being run (their ids): a destination folder another of them already
-    /// uses is refused. The app sets this; tests and tools may leave it empty.
-    public var otherJobIds: @Sendable (Job) -> Set<UUID> = { _ in [] }
+    /// uses is refused. nil (the default) means "unknown" — then ANY other job's folder is refused, so a tool that
+    /// doesn't say which jobs exist can never take one over by accident. The app passes the real set.
+    public var otherJobIds: (@Sendable (Job) -> Set<UUID>)?
 
     private func runOne(_ job: Job, _ d: Destination, _ choice: BackupChoice?, source: inout Scanner.Result?,
                         onEvent: @escaping @Sendable (RunEvent) -> Void) async -> DestinationResult {
@@ -250,7 +251,7 @@ public final class JobRunner: @unchecked Sendable {
             catch let e as DSError { check("Destination", false, e.message); throw e }
             check("Destination", true, storage.describe)
             defer { let s = storage; Task.detached { await s.close() } }
-            do { try await Records.ensure(on: storage, job: job, destination: d, otherJobIds: otherJobIds(job)) }
+            do { try await Records.ensure(on: storage, job: job, destination: d, otherJobIds: otherJobIds?(job)) }
             catch let e as DSError { check("Folder in use", false, e.message); throw e }
             try Task.checkCancellation()
             // 3. plan and copy
@@ -369,7 +370,7 @@ public final class JobRunner: @unchecked Sendable {
         if try await storage.exists(folder) {
             throw DSError("A backup folder named \(folder) is already there — a backup was made this same minute. Wait a minute and run again.")
         }
-        let plan = Planner.backup(kind: kind, folderName: folder, source: src.snapshot, parent: parent?.manifest, unreadable: src.unreadable)
+        let plan = Planner.backup(kind: kind, folderName: folder, source: src.snapshot, parent: parent?.manifest, parentFolder: parent?.folder, unreadable: src.unreadable)
         onEvent(.planned(d.id, summary: plan.summary, unchanged: plan.unchanged))
         try await checkSpace(storage, needed: plan.bytes, d, onEvent)
         result.backupFolder = folder
@@ -442,10 +443,10 @@ public final class JobRunner: @unchecked Sendable {
             return .copied
         } catch is CancellationError {
             throw CancellationError()
-        } catch let e as DSError {
-            if Task.isCancelled { throw CancellationError() }
-            return .failed(e.message)
         } catch {
+            // whatever the storage threw, a cancellation is a cancellation
+            if Task.isCancelled { throw CancellationError() }
+            if let e = error as? DSError { return .failed(e.message) }
             return .failed(error.localizedDescription)
         }
     }

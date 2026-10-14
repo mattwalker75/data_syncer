@@ -238,7 +238,7 @@ public final class SSHStorage: Storage, @unchecked Sendable {
     public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
         try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: localURL.path) { try? FileManager.default.removeItem(at: localURL) }
-        let tmp = localURL.deletingLastPathComponent().appendingPathComponent(".\(localURL.lastPathComponent).datasyncer-part")
+        let tmp = localURL.deletingLastPathComponent().appendingPathComponent(LocalStorage.partName(for: localURL.lastPathComponent))
         let r: ShellResult
         do { r = try await client.drain("cat -- \(q(path))", to: tmp) } catch { try? FileManager.default.removeItem(at: tmp); throw error }
         guard r.ok else { try? FileManager.default.removeItem(at: tmp); throw DSError("\(path) could not be read from \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }

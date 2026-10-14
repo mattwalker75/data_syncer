@@ -373,3 +373,261 @@ final class SafetyTests: XCTestCase {
         XCTAssertTrue(check.items.contains { $0.name == "Last sync" && !$0.ok && $0.detail.contains("could not be read") })
     }
 }
+
+// MARK: - second review (each reproduced by a verifier before it was fixed)
+
+final class SecondReviewTests: XCTestCase {
+    func chmod(_ url: URL, _ mode: Int) { try! FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path) }
+
+    // a read-only source folder must not make its copy unwritable, nor a backup undeletable
+    func testReadOnlySourceFolderDoesNotPoisonTheDestination() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst"), bk = s.dir("bk")
+        makeTree(src, ["ro/f.txt": "1"])
+        chmod(src.appendingPathComponent("ro"), 0o555)
+        defer { chmod(src.appendingPathComponent("ro"), 0o755) }
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let r = runner(FixedClock())
+        _ = await r.run(job) { _ in }
+        XCTAssertEqual(LocalStorage.meta(at: dst.appendingPathComponent("ro"))!.permissions! & 0o700, 0o700)
+        chmod(src.appendingPathComponent("ro"), 0o755)
+        makeTree(src, ["ro/f.txt": "22"], modified: Date().addingTimeInterval(100))
+        chmod(src.appendingPathComponent("ro"), 0o555)
+        let again = await r.run(job) { _ in }
+        XCTAssertEqual(again.results[0].status, .finished, again.results[0].problems.joined(separator: "; "))
+        XCTAssertEqual(readTree(dst)["ro/f.txt"], "22")
+        let bjob = localJob(source: src, dest: bk, mode: .fullOnly, title: "T")
+        _ = await r.run(bjob) { _ in }
+        let storage = LocalStorage(root: bk)
+        let catalog = try await BackupCatalog.load(from: storage)
+        try await RestoreEngine.delete(catalog.entries[0].folder, from: storage, catalog: catalog)
+        XCTAssertFalse(readTree(bk).keys.contains { $0.contains("_Full_") })
+    }
+
+    // switching a destination from backups to sync must leave the backups alone
+    func testSwitchingToSyncKeepsTheBackups() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        var job = localJob(source: src, dest: dst, mode: .fullOnly, title: "T")
+        let clock = FixedClock(); let r = runner(clock)
+        _ = await r.run(job) { _ in }
+        job.destinations[0].mode = .sync(deleteExtras: true); clock.tick()
+        let sync = await r.run(job) { _ in }
+        if case .failed(let why) = sync.results[0].status { XCTAssertTrue(why.contains("backup"), why) } else { XCTFail("a wipe of backups must not go ahead without a preview: \(sync.results[0].status)") }
+        XCTAssertTrue(readTree(dst).keys.contains { $0.hasSuffix("_Full_T/a.txt") })
+        r.confirmSync = { _, plan in XCTAssertEqual(plan.backupsHeld, 1); XCTAssertTrue(plan.delete.isEmpty); return true }
+        let ok = await r.run(job) { _ in }
+        XCTAssertEqual(ok.results[0].status, .finished)
+        XCTAssertTrue(readTree(dst).keys.contains { $0.hasSuffix("_Full_T/a.txt") }, "the backup survives a sync into its folder")
+    }
+
+    // a source root that can be opened but not listed is a failed scan, not an empty source
+    func testUnlistableSourceRootFailsTheScan() async throws {
+        let s = Scratch(); let src = s.dir("src")
+        makeTree(src, ["a.txt": "A"])
+        chmod(src, 0o444)
+        defer { chmod(src, 0o755) }
+        XCTAssertThrowsError(try Scanner.scan(src)) { e in
+            let m = (e as? DSError)?.message ?? ""
+            XCTAssertTrue(m.contains("can't be read") || m.contains("could not be listed"), m)
+        }
+        XCTAssertTrue(isUnder("a/b", [""]))
+    }
+
+    // the destination that used a folder is gone from the job: the folder is taken over
+    func testReplacingADestinationTakesItsFolderOver() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        var job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let r = runner(FixedClock()); r.otherJobIds = { _ in [] }
+        _ = await r.run(job) { _ in }
+        job.destinations = [Destination(name: "New", kind: .localFolder, folder: dst.path, mode: .sync(deleteExtras: true))]
+        let again = await r.run(job) { _ in }
+        XCTAssertEqual(again.results[0].status, .finished, "\(again.results[0].status)")
+        // but a destination that still exists keeps its folder
+        job.destinations.append(Destination(name: "Second", kind: .localFolder, folder: dst.path, mode: .sync(deleteExtras: true)))
+        let two = await r.run(job) { _ in }
+        if case .failed(let why) = two.results[1].status { XCTAssertTrue(why.contains("“New”"), why) } else { XCTFail("\(two.results[1].status)") }
+    }
+
+    // the runner's default refuses another job's folder outright
+    func testUnknownOtherJobsMeansRefuse() async throws {
+        let s = Scratch(); let srcA = s.dir("srcA"), srcB = s.dir("srcB"), dst = s.dir("dst")
+        makeTree(srcA, ["a.txt": "A"]); makeTree(srcB, ["b.txt": "B"])
+        let jobA = localJob(name: "Photos", source: srcA, dest: dst, mode: .sync(deleteExtras: true))
+        let jobB = localJob(name: "Documents", source: srcB, dest: dst, mode: .sync(deleteExtras: true))
+        let r = JobRunner()   // no otherJobIds: unknown
+        _ = await r.run(jobA) { _ in }
+        let b = await r.run(jobB) { _ in }
+        if case .failed(let why) = b.results[0].status { XCTAssertTrue(why.contains("Photos"), why) } else { XCTFail("\(b.results[0].status)") }
+        XCTAssertEqual(readTree(dst)["a.txt"], "A")
+    }
+
+    // a renamed job keeps its backup family
+    func testRenameKeepsTheBackupTitle() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(name: "Work", source: src, dest: dst, mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 5))
+        let clock = FixedClock(); let r = runner(clock)
+        _ = await r.run(job, choices: [job.destinations[0].id: .full]) { _ in }
+        let renamed = job.renamed("Work renamed")
+        XCTAssertEqual(renamed.backupTitle(for: renamed.destinations[0]), "Work")
+        clock.tick()
+        let inc = await r.run(renamed) { _ in }
+        XCTAssertEqual(inc.results[0].status, .finished)
+        XCTAssertTrue(inc.results[0].backupFolder?.contains("_Incremental_Work") ?? false, inc.results[0].backupFolder ?? "nil")
+    }
+
+    // a case-only rename with deletions OFF still ends with the new name, once
+    func testCaseOnlyRenameWithoutDeletions() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["docs/Plan.md": "P"])
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: false))
+        let r = runner(FixedClock())
+        _ = await r.run(job) { _ in }
+        try FileManager.default.moveItem(at: src.appendingPathComponent("docs/Plan.md"), to: src.appendingPathComponent("docs/plan.md"))
+        let second = await r.run(job) { _ in }
+        XCTAssertEqual(second.results[0].copied, 1)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dst.appendingPathComponent("docs").path), ["plan.md"])
+        let third = await r.run(job) { _ in }
+        XCTAssertEqual(third.results[0].copied, 0, "nothing to do once renamed")
+    }
+
+    // a link recorded as deleted is removed on restore (the link, never its target)
+    func testRestoreRemovesADeletedLink() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst"), outside = s.dir("outside")
+        makeTree(outside, ["real.txt": "KEEP"])
+        makeTree(src, ["a.txt": "A", "lnk": "@" + outside.path])
+        let job = localJob(source: src, dest: dst, mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 5), title: "T")
+        let clock = FixedClock(); let r = runner(clock)
+        _ = await r.run(job, choices: [job.destinations[0].id: .full]) { _ in }
+        try FileManager.default.removeItem(at: src.appendingPathComponent("lnk")); clock.tick()
+        _ = await r.run(job) { _ in }
+        let storage = LocalStorage(root: dst)
+        let catalog = try await BackupCatalog.load(from: storage)
+        let target = s.dir("restored")
+        let result = await RestoreEngine.restore(from: storage, catalog: catalog, point: catalog.entries[0].folder, to: target, removeDeleted: true) { _ in }
+        XCTAssertEqual(result.status, .finished, result.problems.joined(separator: "; "))
+        XCTAssertEqual(result.removed, 1)
+        XCTAssertEqual(readTree(target), ["a.txt": "A"])
+        XCTAssertEqual(readTree(outside), ["real.txt": "KEEP"])
+    }
+
+    // records never go through a planted link
+    func testRecordsAreNeverWrittenThroughALink() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst"), other = s.dir("other")
+        makeTree(src, ["a.txt": "A"])
+        makeTree(other, [".datasyncer/README.txt": "x"])
+        try FileManager.default.createSymbolicLink(atPath: dst.appendingPathComponent(".datasyncer").path, withDestinationPath: other.appendingPathComponent(".datasyncer").path)
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let report = await runner(FixedClock()).run(job) { _ in }
+        if case .failed(let why) = report.results[0].status { XCTAssertTrue(why.contains("outside"), why) } else { XCTFail("\(report.results[0].status)") }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: other.appendingPathComponent(".datasyncer").path), ["README.txt"])
+    }
+
+    // the wipe warning compares files with files
+    func testWipeWarningCountsFilesOnly() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        var files: [String: String] = [:]
+        for i in 0..<20 { files["f\(i).txt"] = "x" }
+        for i in 0..<11 { files["empty\(i)/"] = "" }
+        makeTree(src, files)
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let r = runner(FixedClock())
+        _ = await r.run(job) { _ in }
+        for i in 0..<11 { try FileManager.default.removeItem(at: src.appendingPathComponent("empty\(i)")) }
+        let again = await r.run(job) { _ in }
+        XCTAssertEqual(again.results[0].status, .finished, "\(again.results[0].status)")
+        XCTAssertEqual(again.results[0].deleted, 11)
+    }
+
+    // any error during a cancel is a cancellation
+    func testForeignErrorDuringCancelIsACancellation() async throws {
+        struct Boom: Error {}
+        final class BoomStorage: Storage, @unchecked Sendable {
+            let inner: LocalStorage
+            init(_ i: LocalStorage) { inner = i }
+            var describe: String { inner.describe }; var keepsModifiedDates: Bool { true }
+            func checkReachable() async throws { try await inner.checkReachable() }
+            func exists(_ p: RelPath) async throws -> Bool { try await inner.exists(p) }
+            func stat(_ p: RelPath) async throws -> FileMeta? { try await inner.stat(p) }
+            func list(_ d: RelPath) async throws -> [Entry] { try await inner.list(d) }
+            func makeDirectory(_ p: RelPath) async throws { try await inner.makeDirectory(p) }
+            func remove(_ p: RelPath) async throws { try await inner.remove(p) }
+            func upload(localURL: URL, to path: RelPath, meta: FileMeta, progress: (@Sendable (Int64) -> Void)?) async throws {
+                while !Task.isCancelled { try? await Task.sleep(nanoseconds: 2_000_000) }
+                throw Boom()
+            }
+            func download(_ p: RelPath, to l: URL, meta: FileMeta) async throws { try await inner.download(p, to: l, meta: meta) }
+            func readData(_ p: RelPath) async throws -> Data { try await inner.readData(p) }
+            func writeData(_ d: Data, to p: RelPath) async throws { try await inner.writeData(d, to: p) }
+            func freeSpace() async throws -> Int64? { nil }
+            func makeSymlink(_ p: RelPath, target: String) async throws { try await inner.makeSymlink(p, target: target) }
+        }
+        struct F: StorageFactory { func storage(for d: Destination) async throws -> Storage { BoomStorage(LocalStorage(root: URL(fileURLWithPath: d.folder))) } }
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let r = JobRunner(factory: F()); r.otherJobIds = { _ in [] }
+        let task = Task { await r.run(job) { _ in } }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+        let report = await task.value
+        XCTAssertEqual(report.results[0].status, .cancelled)
+    }
+
+    // a very long file name still copies (the part name is shortened)
+    func testVeryLongFileNameCopies() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        let name = String(repeating: "n", count: 240)
+        makeTree(src, [name: "long"])
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        let report = await runner(FixedClock()).run(job) { _ in }
+        XCTAssertEqual(report.results[0].status, .finished, report.results[0].problems.joined(separator: "; "))
+        XCTAssertEqual(readTree(dst)[name], "long")
+        XCTAssertLessThanOrEqual(LocalStorage.partName(for: name).utf8.count, 255)
+        XCTAssertTrue(LocalStorage.partName(for: name).hasSuffix(".datasyncer-part"))
+        XCTAssertEqual(LocalStorage.partName(for: "a.txt"), ".a.txt.datasyncer-part")
+    }
+
+    // cancelling mid-file through the real local storage keeps the old copy and leaves no part file
+    func testCancelMidFileThroughLocalStorage() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(dst, ["big.bin": "old"])
+        try Data(repeating: 1, count: 64 * 1024 * 1024).write(to: src.appendingPathComponent("big.bin"))
+        let st = LocalStorage(root: dst)
+        let meta = LocalStorage.meta(at: src.appendingPathComponent("big.bin"))!
+        let task = Task {
+            try await st.upload(localURL: src.appendingPathComponent("big.bin"), to: "big.bin", meta: meta, progress: { done in
+                if done >= 4 * 1024 * 1024 { withUnsafeCurrentTask { $0?.cancel() } }
+            })
+        }
+        do { try await task.value; XCTFail("should be cancelled") } catch is CancellationError {} catch { XCTFail("\(error)") }
+        XCTAssertEqual(readTree(dst), ["big.bin": "old"])
+    }
+
+    // the title filter is what keeps another family's full out of this chain (a stray WITH a record)
+    func testTitleFilterKeepsFamiliesApart() async throws {
+        let s = Scratch(); let src = s.dir("src"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let mine = localJob(source: src, dest: dst, mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 5), title: "Mine")
+        let clock = FixedClock(); let r = runner(clock); r.otherJobIds = { _ in [] }
+        _ = await r.run(mine, choices: [mine.destinations[0].id: .full]) { _ in }
+        clock.tick()
+        // a NEWER full of another title, with a real manifest, in the same folder
+        let other = Manifest(kind: .full, createdAt: clock.date, jobName: "Other", title: "Other", basedOn: nil, snapshot: ["z.txt": FileMeta(size: 1)], copied: ["z.txt"], failed: nil, deleted: [], fileCount: 1, totalBytes: 1)
+        let otherFolder = BackupNaming.folderName(kind: .full, title: "Other", date: clock.date)
+        let storage = LocalStorage(root: dst)
+        try await storage.makeDirectory(otherFolder)
+        try await Records.saveManifest(other, of: otherFolder, to: storage)
+        clock.tick()
+        let unfiltered = try await BackupCatalog.load(from: storage)
+        XCTAssertEqual(unfiltered.newestFull?.folder, otherFolder, "without the filter the other family's full would win")
+        let inc = await r.run(mine) { _ in }
+        XCTAssertEqual(inc.results[0].status, .finished)
+        let catalog = try await BackupCatalog.load(from: storage, title: "Mine")
+        XCTAssertTrue(catalog.entries[0].manifest?.basedOn?.contains("_Full_Mine") ?? false, catalog.entries[0].manifest?.basedOn ?? "nil")
+        // and the plan says what it is based on
+        let plan = Planner.backup(kind: .incremental, folderName: "x", source: [:], parent: catalog.entries[1].manifest, parentFolder: catalog.entries[1].folder)
+        XCTAssertEqual(plan.basedOn, catalog.entries[1].folder)
+    }
+}
