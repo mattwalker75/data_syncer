@@ -100,6 +100,7 @@ public enum Preflight {
                 }
             }
         }
+        await storage.close()
         return out
     }
 

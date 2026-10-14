@@ -32,7 +32,9 @@ public enum NetworkShare {
         let wantShare = url.path.split(separator: "/").first.map { String($0).removingPercentEncoding?.lowercased() ?? String($0).lowercased() } ?? ""
         guard !wantShare.isEmpty else { return false }
         func label(_ s: String) -> String { String(s.split(separator: ".").first ?? Substring(s)) }
-        func sameHost(_ a: String) -> Bool { let a = bare(a); return a == wantHost || (!a.contains(":") && label(a) == label(wantHost)) }
+        // "nas", "nas.local" and "nas._smb._tcp.local" are one machine; an address is only ever itself
+        func isAddress(_ h: String) -> Bool { h.contains(":") || h.allSatisfy { $0.isNumber || $0 == "." } }
+        func sameHost(_ a: String) -> Bool { let a = bare(a); return a == wantHost || (!isAddress(a) && !isAddress(wantHost) && label(a) == label(wantHost)) }
         if let remount, let h = remount.host {
             let share = remount.path.split(separator: "/").first.map { String($0).removingPercentEncoding?.lowercased() ?? String($0).lowercased() } ?? ""
             return sameHost(h) && share == wantShare
@@ -59,19 +61,30 @@ public enum NetworkShare {
         let mountOpts = NSMutableDictionary()
         mountOpts[kNetFSAllowSubMountsKey] = true
         let request = Locked<AsyncRequestID?>(nil)
+        // NetFS never calls the block once a request is cancelled, so the cancel handler resumes the wait itself;
+        // whichever side comes first resumes, the other finds `pending` empty
+        let pending = Locked<CheckedContinuation<[String], Error>?>(nil)
+        func resume(_ r: Result<[String], Error>) {
+            let c = pending.with { c -> CheckedContinuation<[String], Error>? in let v = c; c = nil; return v }
+            guard let c else { return }
+            switch r { case .success(let p): c.resume(returning: p); case .failure(let e): c.resume(throwing: e) }
+        }
         let paths: [String] = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[String], Error>) in
+                pending.value = cont
+                if Task.isCancelled { resume(.failure(CancellationError())); return }
                 let queue = DispatchQueue(label: "datasyncer.netfs")
                 var id: AsyncRequestID?
                 let status = NetFSMountURLAsync(url as CFURL, nil, user as CFString?, password as CFString?, open, mountOpts, &id, queue) { status, _, points in
-                    if status != 0 { cont.resume(throwing: status == ECANCELED ? CancellationError() : explain(status, url)); return }
-                    cont.resume(returning: (points as? [String]) ?? [])
+                    if status != 0 { resume(.failure(status == ECANCELED ? CancellationError() : explain(status, url))); return }
+                    resume(.success((points as? [String]) ?? []))
                 }
-                if status != 0 { cont.resume(throwing: explain(status, url)); return }
+                if status != 0 { resume(.failure(explain(status, url))); return }
                 request.value = id
             }
         } onCancel: {
             if let id = request.value { NetFSMountURLCancel(id) }
+            resume(.failure(CancellationError()))
         }
         if let first = paths.first { return URL(fileURLWithPath: first, isDirectory: true) }
         // mounted, but no path came back: look it up

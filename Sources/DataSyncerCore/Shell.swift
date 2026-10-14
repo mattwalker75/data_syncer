@@ -32,6 +32,7 @@ public enum Shell {
                 DispatchQueue.global(qos: .userInitiated).async {
                     if cancelled.value || Task.isCancelled { cont.resume(throwing: CancellationError()); return }
                     do { try p.run() } catch { cont.resume(throwing: DSError("Could not start \(executable): \(error.localizedDescription)")); return }
+                    if cancelled.value { p.terminate() }   // a cancel that landed while the process was starting
                     // readers on their own threads: a full pipe would otherwise block the child
                     let group = DispatchGroup()
                     var outData = Data(), errData = Data()
@@ -73,6 +74,7 @@ public enum Shell {
                     do { input = try FileHandle(forReadingFrom: file) } catch { cont.resume(throwing: DSError("\(file.lastPathComponent) could not be read: \(error.localizedDescription)")); return }
                     defer { try? input.close() }
                     do { try p.run() } catch { cont.resume(throwing: DSError("Could not start \(executable): \(error.localizedDescription)")); return }
+                    if cancelled.value { p.terminate() }   // a cancel that landed while the process was starting
                     let group = DispatchGroup()
                     var outData = Data(), errData = Data()
                     group.enter(); DispatchQueue.global().async { outData = out.fileHandleForReading.readDataToEndOfFile(); group.leave() }
@@ -120,6 +122,7 @@ public enum Shell {
                     do { output = try FileHandle(forWritingTo: file) } catch { cont.resume(throwing: DSError("\(file.path) could not be written: \(error.localizedDescription)")); return }
                     defer { try? output.close() }
                     do { try p.run() } catch { cont.resume(throwing: DSError("Could not start \(executable): \(error.localizedDescription)")); return }
+                    if cancelled.value { p.terminate() }   // a cancel that landed while the process was starting
                     let group = DispatchGroup()
                     var errData = Data()
                     group.enter(); DispatchQueue.global().async { errData = err.fileHandleForReading.readDataToEndOfFile(); group.leave() }

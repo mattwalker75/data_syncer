@@ -355,3 +355,99 @@ final class SSHRoundTripTests: XCTestCase {
         catch let e as DSError { XCTAssertTrue(e.message.contains("refused the sign-in"), e.message) }
     }
 }
+
+// MARK: - second review (each reproduced by a verifier before it was fixed)
+
+final class SSHSecondReviewTests: XCTestCase {
+    var scratch: Scratch!
+    var server: TestSSHServer!
+
+    override func setUpWithError() throws {
+        scratch = Scratch()
+        guard let s = try TestSSHServer.start(in: scratch) else { throw XCTSkip("a private sshd could not be started on this Mac") }
+        server = s
+    }
+    override func tearDown() async throws { server = nil }
+
+    // a cancelled upload must never install a short file under the real name
+    func testCancelledUploadKeepsTheOldCopy() async throws {
+        let remote = scratch.dir("remote")
+        makeTree(remote, ["big.bin": "old content"])
+        let big = scratch.dir("local").appendingPathComponent("big.bin")
+        try Data(repeating: 65, count: 120 * 1024 * 1024).write(to: big)
+        let st = SSHStorage(options: server.options, root: remote.path)
+        let handle = Locked<Task<Void, Error>?>(nil)
+        // the progress callback runs on the writer thread (no current task): cancel through the handle
+        let task = Task {
+            try await st.upload(localURL: big, to: "big.bin", meta: LocalStorage.meta(at: big)!, progress: { sent in
+                if sent >= 8 * 1024 * 1024 { handle.value?.cancel() }
+            })
+        }
+        handle.value = task
+        do { try await task.value; XCTFail("should be cancelled") } catch is CancellationError {} catch { XCTFail("\(error)") }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(LocalStorage.meta(at: remote.appendingPathComponent("big.bin"))?.size, 11, "the old copy must survive")
+        XCTAssertFalse(readTree(remote).keys.contains { $0.contains("datasyncer-part") }, "no part file left: \(readTree(remote).keys)")
+        await st.close()
+    }
+
+    // closing one client never cuts another's command to the same server
+    func testClosingOneClientLeavesAnotherAlone() async throws {
+        let a = SSHStorage(options: server.options, root: scratch.root.path)
+        let b = SSHStorage(options: server.options, root: scratch.root.path)
+        _ = try await a.client.run("true"); _ = try await b.client.run("true")
+        async let slow = b.client.run("sleep 2; echo done")
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await a.close()
+        let r = try await slow
+        XCTAssertEqual(r.text.trimmingCharacters(in: .whitespacesAndNewlines), "done")
+        await b.close()
+    }
+
+    // a wrong mode on our own control folder is repaired, not refused
+    func testControlFolderModeIsRepaired() async throws {
+        let dir = "/tmp/datasyncer-ssh-\(getuid())"
+        chmod(dir, 0o755)
+        defer { chmod(dir, 0o700) }
+        let st = SSHStorage(options: server.options, root: scratch.root.path)
+        let ok = try await st.exists("nothing")
+        XCTAssertFalse(ok)
+        var s = Darwin.stat(); lstat(dir, &s)
+        XCTAssertEqual(s.st_mode & 0o777, 0o700)
+        await st.close()
+    }
+
+    // a failed download leaves the local file as it was
+    func testFailedDownloadKeepsTheLocalFile() async throws {
+        let local = scratch.dir("local").appendingPathComponent("keep.txt")
+        try Data("keep".utf8).write(to: local)
+        let st = SSHStorage(options: server.options, root: scratch.root.path)
+        do { try await st.download("does-not-exist.txt", to: local, meta: FileMeta()); XCTFail("should fail") } catch let e as DSError { XCTAssertTrue(e.message.contains("could not be read")) }
+        XCTAssertEqual(try String(contentsOf: local, encoding: .utf8), "keep")
+        await st.close()
+    }
+
+    // "!" survives a csh/tcsh login shell on the server
+    func testBangIsSafeUnderCsh() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/bin/tcsh") else { throw XCTSkip("no tcsh here") }
+        let inner = SSHClient.wrapped("printf %s " + SSHStorage.rq("/tmp/bang!.txt"))
+        for shell in ["/bin/tcsh", "/bin/csh", "/bin/sh", "/bin/zsh", "/bin/bash"] {
+            let r = try await Shell.run(shell, ["-f", "-c", inner].filter { !($0 == "-f" && shell.hasSuffix("sh") && !shell.contains("csh")) })
+            XCTAssertEqual(r.text, "/tmp/bang!.txt", "\(shell): \(r.stderr)")
+        }
+        // and through the real server (zsh login) with a bang in the name
+        let remote = scratch.dir("remote-bang")
+        let st = SSHStorage(options: server.options, root: remote.path)
+        try await st.writeData(Data("b".utf8), to: "hey!.txt")
+        let walked = try await st.walk()
+        XCTAssertEqual(Set(walked.keys), ["hey!.txt"])
+        await st.close()
+    }
+
+    func testShareMatchingNeverMatchesAnotherAddress() {
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "//m@192.168.1.7/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: URL(string: "smb://192.168.1.5/backups")!))
+        XCTAssertFalse(NetworkShare.matches(mountedFrom: "afp_x", mountedOn: "/Volumes/backups", fsType: "afpfs", remount: URL(string: "smb://10.0.0.9/backups"), url: URL(string: "smb://10.0.0.20/backups")!))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//m@192.168.1.5/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: URL(string: "smb://192.168.1.5/backups")!))
+        XCTAssertTrue(NetworkShare.matches(mountedFrom: "//m@nas.local/backups", mountedOn: "/Volumes/backups", fsType: "smbfs", remount: nil, url: URL(string: "smb://nas/backups")!))
+    }
+}

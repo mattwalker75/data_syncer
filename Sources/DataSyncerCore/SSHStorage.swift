@@ -41,14 +41,22 @@ public final class SSHClient: @unchecked Sendable {
         var st = Darwin.stat()
         guard lstat(controlDir.path, &st) == 0 else { throw DSError("The SSH working folder \(controlDir.path) could not be made.") }
         let isDir = (st.st_mode & S_IFMT) == S_IFDIR
-        guard isDir, st.st_uid == getuid(), (st.st_mode & 0o777) == 0o700 else {
-            throw DSError("The SSH working folder \(controlDir.path) belongs to someone else or has the wrong permissions. Remove it and try again.")
+        guard isDir, st.st_uid == getuid() else {
+            throw DSError("The SSH working folder \(controlDir.path) belongs to someone else or is a link. Remove it and try again.")
+        }
+        // ours but with the wrong mode (something touched /tmp): put it right rather than refuse
+        if (st.st_mode & 0o777) != 0o700 { chmod(controlDir.path, 0o700) }
+        guard lstat(controlDir.path, &st) == 0, (st.st_mode & 0o777) == 0o700 else {
+            throw DSError("The SSH working folder \(controlDir.path) could not be made private. Remove it and try again.")
         }
     }
 
+    /// Each client gets its own master connection, so closing one never cuts another's command to the same server.
+    private let instance = String(UUID().uuidString.prefix(8))
+
     public var baseArguments: [String] {
         var a = ["-p", String(options.port),
-                 "-o", "ControlMaster=auto", "-o", "ControlPath=\(controlDir.path)/%C", "-o", "ControlPersist=120",
+                 "-o", "ControlMaster=auto", "-o", "ControlPath=\(controlDir.path)/%C-\(instance)", "-o", "ControlPersist=120",
                  "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "StrictHostKeyChecking=accept-new",
                  "-o", "LogLevel=ERROR", "-o", "NumberOfPasswordPrompts=1"]
         if let k = options.knownHostsFile { a += ["-o", "UserKnownHostsFile=\(k)"] }
@@ -57,14 +65,25 @@ public final class SSHClient: @unchecked Sendable {
         return a
     }
 
+    static let askpassText = "#!/bin/sh\nprintf '%s\\n' \"$DATASYNCER_SSH_SECRET\"\n"
+    private static let askpassLock = NSLock()
+
     /// With a password or passphrase, ssh asks an "askpass" program for it; ours prints it from the environment.
-    /// The script is written afresh every time (never trusting one found there).
+    /// The script's content never changes, so it is written once (atomically, under a lock) and only replaced
+    /// when it is missing or differs — rewriting it on every call made a parallel client's ssh find no script.
     public var environment: [String: String] {
         guard let secret = options.secret else { return [:] }
         let script = controlDir.appendingPathComponent("askpass.sh")
-        try? FileManager.default.removeItem(at: script)
-        try? Data("#!/bin/sh\nprintf '%s\\n' \"$DATASYNCER_SSH_SECRET\"\n".utf8).write(to: script)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        SSHClient.askpassLock.lock(); defer { SSHClient.askpassLock.unlock() }
+        var st = Darwin.stat()
+        let fine = lstat(script.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG && st.st_uid == getuid() && (st.st_mode & 0o777) == 0o700
+            && (try? String(contentsOf: script, encoding: .utf8)) == SSHClient.askpassText
+        if !fine {
+            let tmp = controlDir.appendingPathComponent("askpass.sh.\(getpid()).tmp")
+            try? Data(SSHClient.askpassText.utf8).write(to: tmp)
+            chmod(tmp.path, 0o700)
+            _ = rename(tmp.path, script.path)
+        }
         return ["SSH_ASKPASS": script.path, "SSH_ASKPASS_REQUIRE": "force", "DISPLAY": ":0", "DATASYNCER_SSH_SECRET": secret]
     }
 
@@ -139,7 +158,8 @@ public final class SSHClient: @unchecked Sendable {
             return DSError("\(o.host) closed the connection as soon as it opened — often rate limiting after failed sign-ins, or a firewall. Wait a minute and try again.")
         }
         if s.contains("control socket") || s.contains("mux") { return DSError("The SSH connection to \(who) broke: \(stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
-        let line = stderr.split(separator: "\n").last.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? "no details"
+        let line = stderr.split(separator: "\n").last.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+        if line.isEmpty { return DSError("The SSH connection to \(who) was lost part-way through. Check the network and try again.") }
         return DSError("SSH to \(who) failed: \(line)")
     }
 }
@@ -172,7 +192,10 @@ public final class SSHStorage: Storage, @unchecked Sendable {
     /// Closes the shared connection when a run is done with this destination.
     public func close() async { await client.close() }
 
-    private func q(_ path: RelPath) -> String { Shell.quote(joinPath(root, path)) }
+    /// Quoted for the remote `sh -c`, with "!" spelled so a csh/tcsh login shell (which expands history even inside
+    /// single quotes) never sees it: the inner sh rebuilds it from printf.
+    static func rq(_ s: String) -> String { Shell.quote(s).replacingOccurrences(of: "!", with: "'\"$(printf '\\041')\"'") }
+    private func q(_ path: RelPath) -> String { SSHStorage.rq(joinPath(root, path)) }
 
     public func checkReachable() async throws {
         let r = try await client.run("if test -d \(q("")); then if test -w \(q("")); then echo ok; else echo unwritable; fi; else echo missing; fi")
@@ -228,16 +251,24 @@ public final class SSHStorage: Storage, @unchecked Sendable {
         let stamp = SSHStorage.touchStamp(meta.modified)
         // written under a temporary name and moved into place only when complete, so the old copy survives a
         // dropped connection or a cancel and nothing half-written ever sits under the real name
-        let tmp = Shell.quote(joinPath(root, path) + ".datasyncer-part")
-        let command = "rm -rf -- \(tmp); cat > \(tmp) && chmod \(perms) \(tmp) && TZ=UTC touch -m -t \(stamp) -- \(tmp) && { if test -L \(q(path)) || test -d \(q(path)); then rm -rf -- \(q(path)); fi; mv -f -- \(tmp) \(q(path)); }"
-        let r = try await client.feed(command, file: localURL, progress: progress)
-        if !r.ok { _ = try? await client.run("rm -f -- \(tmp)") }
-        guard r.ok else { throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
+        let tmp = SSHStorage.rq(joinPath(root, path) + ".datasyncer-part")
+        // the remote `cat` cannot tell a finished transfer from a cut one (it just sees end-of-file), so the server
+        // checks the byte count before the file is moved into place; a short file is removed, never installed
+        let size = (try? FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? Int64) ?? meta.size
+        let command = "rm -rf -- \(tmp); cat > \(tmp) && test \"$(wc -c < \(tmp))\" -eq \(size) && chmod \(perms) \(tmp) && TZ=UTC touch -m -t \(stamp) -- \(tmp) && { if test -L \(q(path)) || test -d \(q(path)); then rm -rf -- \(q(path)); fi; mv -f -- \(tmp) \(q(path)); } || { rm -f -- \(tmp); exit 1; }"
+        let r: ShellResult
+        do { r = try await client.feed(command, file: localURL, progress: progress) }
+        catch {
+            // the transfer was cut (cancel, dropped connection): remove the part file, outside the cancelled task
+            let c = client, t = tmp
+            await Task.detached { _ = try? await c.run("rm -f -- \(t)") }.value
+            throw error
+        }
+        guard r.ok else { throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "the transfer did not complete" : r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
     public func download(_ path: RelPath, to localURL: URL, meta: FileMeta) async throws {
         try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if FileManager.default.fileExists(atPath: localURL.path) { try? FileManager.default.removeItem(at: localURL) }
         let tmp = localURL.deletingLastPathComponent().appendingPathComponent(LocalStorage.partName(for: localURL.lastPathComponent))
         let r: ShellResult
         do { r = try await client.drain("cat -- \(q(path))", to: tmp) } catch { try? FileManager.default.removeItem(at: tmp); throw error }
@@ -254,8 +285,8 @@ public final class SSHStorage: Storage, @unchecked Sendable {
     }
 
     public func writeData(_ data: Data, to path: RelPath) async throws {
-        let tmp = Shell.quote(joinPath(root, path) + ".datasyncer-part")
-        let r = try await client.run("cat > \(tmp) && mv -f -- \(tmp) \(q(path))", stdin: data)
+        let tmp = SSHStorage.rq(joinPath(root, path) + ".datasyncer-part")
+        let r = try await client.run("cat > \(tmp) && test \"$(wc -c < \(tmp))\" -eq \(data.count) && mv -f -- \(tmp) \(q(path))", stdin: data)
         guard r.ok else { _ = try? await client.run("rm -f -- \(tmp)"); throw DSError("\(path) could not be written on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
@@ -273,7 +304,7 @@ public final class SSHStorage: Storage, @unchecked Sendable {
     }
 
     public func makeSymlink(_ path: RelPath, target: String) async throws {
-        let r = try await client.run("rm -rf -- \(q(path)) 2>/dev/null; ln -s -- \(Shell.quote(target)) \(q(path))")
+        let r = try await client.run("rm -rf -- \(q(path)) 2>/dev/null; ln -s -- \(SSHStorage.rq(target)) \(q(path))")
         guard r.ok else { throw DSError("The link \(path) could not be made on \(client.options.host): \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
     }
 
