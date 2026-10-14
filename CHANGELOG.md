@@ -2,6 +2,52 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
+## [0.9.2] — 2026-10-13 — the second review: 47 verified fixes
+
+Every item below was reproduced by a verifier (a throwaway test, probe or screenshot) before it was fixed.
+
+### Fixed (data safety)
+- SSH uploads could install a truncated file on cancel or a dropped connection (the remote `cat`
+  sees end-of-file and exits 0): the server now checks the byte count before moving the file into
+  place, and the part file is removed on every failure path.
+- Network shares: an IP address matched another address with the same first octet; addresses now
+  only match themselves. Cancelling while a share was still mounting hung the app forever.
+- Read-only (0555) source folders made the destination unwritable and backups undeletable: folders
+  keep owner rwx.
+- Switching a destination from backups to Sync deleted its backups: dated backup folders are never
+  extras (the preview says so).
+- A source root that could be opened but not listed (Desktop/Documents without Full Disk Access,
+  a 0444 folder) scanned as empty and an incremental recorded every file as deleted: the scan fails.
+- S3 crashed on a bucket or region with a space; OneDrive listed a destination as empty when the
+  typed folder's case differed, and on a delta 404; Dropbox and OneDrive accepted a file as the
+  destination folder.
+- Dropbox/OneDrive chunk retries after a lost reply (409 incorrect_offset / 416) failed the file:
+  they resume from the service's offset. A revoked sign-in made one token request and one identical
+  problem per file: the refusal is remembered and the destination stops after one.
+- Removing a destination and adding a new one on the same folder was refused forever; renaming a
+  job orphaned its backups; a case-only rename with deletions off re-copied every run; restore
+  refused to remove a deleted link; records could be written through a planted `.datasyncer` link;
+  the wipe warning counted folders against files; a foreign error during a cancel read as "failed";
+  240-byte file names failed; the runner's default for other jobs was open.
+- Closing one SSH client cut another's command to the same server; the askpass script was
+  rewritten on every call (a parallel client found none); `!` failed on csh/tcsh login shells;
+  download deleted the local file before transferring; a 0755 control folder was refused.
+
+### Fixed (app)
+- The sync preview no longer appears only on the run screen; Return means Skip when a wipe is
+  flagged; a duplicated job starts with its destinations off and says why; sheets and alerts raised
+  from Settings show there; Run… no longer runs a full Preflight per destination; the theme editor
+  previews the Look; a finished restore is kept, recorded in history and notified; the SSH sign-in
+  method is stored, not inferred; Edit… no longer reads the secret (no Keychain prompt); a job can't
+  be deleted while its restore runs; whole-row recent runs and history double-click; theme colours
+  survive the picker; and the wording/accessibility items from the list.
+
+### Fixed (scripts and docs)
+- A relative `--to` resolved against the repo; a failed signature left a half-made app; `--to
+  build` deleted the app it just built; compile errors were invisible after a failed test run;
+  `--check` exited 0 on an unsupported macOS; `-o` help; the red-suite sentence; "two targets";
+  the `http://` limits of local networking; the user guide's missing items.
+
 ## [0.9.1] — 2026-10-13 — the deep review: ~45 fixes and enhancements
 
 ### Fixed (data safety)

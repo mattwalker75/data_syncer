@@ -3,10 +3,10 @@
 ## Stack
 
 Swift 5 language mode on a current toolchain, SwiftPM (no Xcode project), macOS 14 or newer.
-Two targets: `DataSyncerCore` (a library: everything that copies, compares, records and restores,
+Two targets plus the tests: `DataSyncerCore` (a library: everything that copies, compares, records and restores,
 with no UI) and `DataSyncer` (the SwiftUI app, which only drives the core and shows what it
 reports). Tests run against the core alone. `BUILD_APP.sh` wraps the built program, the icon and
-an `Info.plist` into `Data Syncer.app` and signs it ad hoc.
+an `Info.plist` into `Data Syncer.app` and signs it — ad hoc by default, or with a Keychain certificate (`--sign`).
 
 ## Folders
 
@@ -83,7 +83,10 @@ tokens back; a 401 invalidates it and the request is retried once. Sign-in: `OAu
 authorization URL (PKCE S256), opens the browser, and `LoopbackListener` catches the redirect on the
 fixed port 45873 (Dropbox and Microsoft need the exact URI registered; Google accepts any loopback port).
 
-**SSH** uses the Mac's own `/usr/bin/ssh` (owner decision: built-in tools, `~/.ssh` as Terminal
+**SSH uploads** go to a temporary name; the server checks the byte count (`wc -c`) against the
+expected size before `mv` puts the file in place, because the remote `cat` cannot tell a finished
+transfer from a cut one. Each `SSHClient` has its own master socket. The askpass script is written once.
+Paths are quoted so a csh/tcsh login shell cannot expand `!`. **SSH** uses the Mac's own `/usr/bin/ssh` (owner decision: built-in tools, `~/.ssh` as Terminal
 uses it). One master connection per server (`ControlMaster`, a socket under `/tmp/datasyncer-ssh-<uid>`)
 and every operation is a short remote command: `find -printf` (GNU) or `find -exec stat -f` (BSD)
 for listing — one command for a whole tree —, `cat >` fed from stdin for uploads (with `chmod` and

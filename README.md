@@ -33,8 +33,9 @@ by the app) and SSH servers through the Mac's own `ssh`, step 5, the cloud servi
 S3-compatible, Google Drive, Dropbox, OneDrive, with in-app setup guides), and step 6, appearance
 (accent colours, named themes) and polish, followed by a deep review that fixed ~45 findings (data
 safety first: nothing is deleted under an unreadable source folder, nothing is written through a
-link, a half-copied file never replaces a good one, case-only renames keep the file). **Version
-0.9.1, 69 tests; the next thing is real-world testing.** The cloud code is tested against fakes only
+link, a half-copied file never replaces a good one, case-only renames keep the file), and a second
+review whose 47 findings were each reproduced before being fixed. **Version 0.9.2, 99 tests; the next
+thing is real-world testing.** The cloud code is tested against fakes only
 so far — see Docs/DEVELOPMENT.md.
 
 ## Quick start

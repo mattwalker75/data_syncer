@@ -15,7 +15,7 @@
 #   (no options)        Release build for this Mac's kind of chip → build/Data Syncer.app
 #   -u, --universal     Build for Apple-silicon AND Intel Macs in one app (slower; for copying to other Macs)
 #   -d, --debug         Debug build (faster to compile, slower to run)
-#   -o, --out DIR       Put the app somewhere else (default: build/)
+#   -o, --out DIR       Put the app somewhere else (default: build/; a relative DIR is relative to where you run it)
 #   -s, --sign IDENTITY Sign with a certificate from your Keychain instead of the ad-hoc signature, so
 #                       Full Disk Access and Keychain permissions survive rebuilds (see Docs/SCRIPTS.md).
 #                       Also read from the DATASYNCER_SIGN_IDENTITY environment variable.
@@ -110,6 +110,8 @@ if codesign --force --sign "$SIGN" "$APP" 2> build/codesign.log; then
   else ok "Signed with “$SIGN”"; fi
 else
   err "Could not sign the app:"; cat build/codesign.log >&2
-  [[ "$SIGN" == "-" ]] || { err "Check the certificate's name in Keychain Access (it must be a Code Signing certificate)."; exit 1; }
+  [[ "$SIGN" == "-" ]] || err "Check the certificate's name in Keychain Access (it must be a Code Signing certificate)."
+  rm -rf "$APP"   # an unsigned bundle will not open on Apple silicon: never leave one behind as if it were built
+  exit 1
 fi
 if [[ $UNIVERSAL -eq 1 ]]; then ok "Built $APP (version $VERSION, universal)"; else ok "Built $APP (version $VERSION, $(uname -m) only)"; fi

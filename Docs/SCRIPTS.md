@@ -23,7 +23,7 @@
 
 Needs macOS 14 or newer and Xcode's command-line tools; when they are missing it offers to start
 Apple's installer (`xcode-select --install`), then asks you to run it again. Test output goes to
-`build/test.log`; a red suite asks before installing (or stops, without `--yes`). A failed build or
+`build/test.log`; a red suite asks "Build and install anyway?" (`--yes` goes ahead without asking). A failed build or
 copy stops with the reason — the old app is never replaced by a broken one. Safe to run again at
 any time: it rebuilds and replaces the app.
 
@@ -83,8 +83,10 @@ Compiles with `swift build` (output in `build/build.log`; the last 40 lines are 
 fails, and nothing is packaged), then assembles the `.app`: the program as `Contents/MacOS/Data
 Syncer`, `icon/DataSyncer.icns`, an `Info.plist` (bundle id `com.mattwalker.datasyncer`, version
 from `Sources/DataSyncerCore/Version.swift`, macOS 14 minimum, the usage descriptions macOS shows
-when it asks about Desktop/Documents/Downloads, removable drives and network shares, and local
-networking allowed for `http://` S3-compatible services on the LAN) and the signature.
+when it asks about Desktop/Documents/Downloads, removable drives and network shares, and
+`NSAllowsLocalNetworking`, which lets a plain `http://` S3-compatible service be reached when its
+address is an IP address, a bare name or a `.local` name — any other `http://` host is blocked by
+macOS; use `https://`) and the signature. A failed signature removes the half-made app and stops.
 
 ## icon/make_icns.sh
 

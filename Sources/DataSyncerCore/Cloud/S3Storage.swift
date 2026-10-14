@@ -57,7 +57,7 @@ public final class S3Storage: Storage, @unchecked Sendable {
         if baseURL(for: S3Options(bucket: bucket, region: region, endpoint: endpoint, accessKey: "", secretKey: "")) == nil { return "The bucket, region and address don't form a usable web address." }
         if let e = endpoint?.trimmingCharacters(in: .whitespaces), !e.isEmpty {
             guard let u = URL(string: e), let scheme = u.scheme?.lowercased(), ["http", "https"].contains(scheme), u.host != nil else {
-                return "The service address should start with https:// (or http://) and name the server, for example https://minio.local:9000."
+                return "The service address should start with https:// and name the server, for example https://minio.local:9000. (Plain http:// works only for an address on your own network: an IP address, a bare name or a .local name.)"
             }
         }
         return nil

@@ -7,7 +7,13 @@ on its own: open the app, pick a job, press **Run…**.
 
 - **Jobs** are down the left. Click one to see it. Under each name: how many destinations it has and
   when it last ran; an orange dot means the last run had problems. Right-click a job to rename it or
-  change its source, duplicate it, run it or delete it (Delete key works too).
+  change its source, duplicate it, run it or delete it (Delete key works too). Renaming a job keeps its
+  backups going under their old title. A duplicate starts with its destinations turned off: they still
+  point at the original's folders, which two jobs can't share — give each a folder of its own, then
+  turn it on.
+
+  **Keyboard:** ⌘N new job · ⌘D duplicate · ⌘R run · ⌘K check destinations · ⌘L show the last run ·
+  ⌘. cancel · ⌘, settings.
 - **+ New job** and the **gear** (Settings) are at the bottom of the list.
 - The selected job's page shows its **source** (the folder it copies from, with its size and a
   button to show it in Finder), its **destinations** in the order they run, and its **recent runs**.
@@ -41,8 +47,9 @@ on its own: open the app, pick a job, press **Run…**.
     server is used its identity is remembered in `~/.ssh/known_hosts`, as Terminal would;
   - **Amazon S3** (or an S3-compatible service such as Backblaze B2, Wasabi or MinIO): an account
     (access key ID + secret key, saved once under Settings → Accounts or with **Add account…**), the
-    bucket, its region, the service's address for non-Amazon services (`https://…`), and a folder in
-    the bucket. Data Syncer never creates buckets.
+    bucket, its region, the service's address for non-Amazon services (`https://…`; plain `http://`
+    only works for a server on your own network named by IP address, a bare name or a `.local` name),
+    and a folder in the bucket. Data Syncer never creates buckets.
   - **Google Drive, Dropbox, OneDrive**: an account you sign in to once (the service's own sign-in
     page opens in your browser; Data Syncer never sees your password; tokens go in your Keychain)
     and a folder path in the service. The first time, **Add account…** shows a short one-time setup
@@ -93,7 +100,8 @@ the destination would be deleted) it says so in orange first.
   the running job finishes; everything else works. When the run ends the strip stays, with **See
   summary** and **Dismiss**, until you've looked (Job → Show Last Run, ⌘L, opens it too).
 - **Cancel** stops as soon as it can, even part-way through a big file. Nothing half-written is ever
-  left under a real file name: the old copy stays until the new one is complete. A backup that
+  left under a real file name: the old copy stays until the new one is complete (over SSH the server
+  checks the size before the file is put in place). Folder dates and permissions are kept too. A backup that
   didn't finish is removed so it is never mistaken for one; a sync keeps what it already copied and
   its record is saved on the way out.
 - A destination that fails does not stop the next one. When the run ends you get a summary on the
@@ -146,8 +154,8 @@ deleting. It never deletes a backup on its own.
 - **Appearance** — Light, Dark, or follow the system; the accent colour (nine to pick from, or any
   colour of your own); and **your own themes**: **New theme…** opens an editor for the look, the
   accent, the good / attention / problem colours and optional tints for the sidebar and cards — the
-  windows follow along while you adjust, nothing is saved until **Save and use**, and the list lets
-  you switch between your themes and the plain system colours.
+  windows follow along while you adjust (the look too), nothing is saved until **Save and use**, and
+  the list lets you switch between your themes and the plain system colours; deleting a theme asks first.
 - **Accounts** — what this Mac has for SSH (the keys in `~/.ssh`, what ssh-agent has loaded, the
   hosts in `~/.ssh/config`, how many servers `known_hosts` remembers — read only, with a button to
   open the folder); the share and SSH sign-ins Data Syncer keeps in your Keychain, each with
@@ -156,7 +164,8 @@ deleting. It never deletes a backup on its own.
   account say so until you pick another.
 - **Notifications** — the notification when a run finishes. Turning it on asks macOS for permission
   right away, and the pane says whether notifications are allowed.
-- **Run history** — every run, newest first; double-click one for its report; **Clear history…**
+- **Run history** — every run and restore, newest first; double-click a row for its report;
+  "See all N runs" under a job's recent runs opens it too; **Clear history…**
   asks, then forgets them (nothing at any destination is touched).
 
 ## Deleting things

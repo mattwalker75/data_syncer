@@ -26,6 +26,7 @@
 # Then open Data Syncer from /Applications (or build/Data Syncer.app).
 #
 set -uo pipefail
+ORIG_PWD="$PWD"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; cd "$HERE"
 if [[ -t 1 ]]; then C_RESET=$'\033[0m'; C_RED=$'\033[0;31m'; C_GRN=$'\033[0;32m'; C_YEL=$'\033[0;33m'; C_BLU=$'\033[0;34m'; else C_RESET=''; C_RED=''; C_GRN=''; C_YEL=''; C_BLU=''; fi
 info() { echo "${C_BLU}==>${C_RESET} $*"; }; ok() { echo "${C_GRN}OK ${C_RESET} $*"; }; warn() { echo "${C_YEL}!! ${C_RESET} $*"; }; err() { echo "${C_RED}ERROR${C_RESET} $*" >&2; }
@@ -48,15 +49,17 @@ while [[ $# -gt 0 ]]; do
 done
 confirm() { [[ $YES -eq 1 ]] && return 0; read -r -p "$1 [y/N] " a; [[ "$a" == y || "$a" == Y ]]; }
 if [[ $COPY -eq 1 || $CHECK_ONLY -eq 1 ]]; then
+  [[ "$DEST" = /* ]] || DEST="$ORIG_PWD/$DEST"   # a relative --to is relative to where the script was run from
   resolved="$(cd "$DEST" 2>/dev/null && pwd)" || { err "The folder $DEST doesn't exist. Make it first, or pick another with --to."; exit 2; }
   DEST="$resolved"
+  if [[ "$DEST" == "$HERE/build" ]]; then err "--to can't be the build folder itself (that is where the app is built). Pick another folder."; exit 2; fi
 fi
 TARGET="$DEST/Data Syncer.app"
 
 echo "Data Syncer — install"; echo
 # ---- macOS version
 major="$(sw_vers -productVersion | cut -d. -f1)"
-if [[ "$major" -ge $MIN_MACOS ]]; then ok "macOS $(sw_vers -productVersion)"; else err "Data Syncer needs macOS $MIN_MACOS or newer (this Mac has $(sw_vers -productVersion))."; [[ $CHECK_ONLY -eq 1 ]] || exit 1; fi
+if [[ "$major" -ge $MIN_MACOS ]]; then ok "macOS $(sw_vers -productVersion)"; else err "Data Syncer needs macOS $MIN_MACOS or newer (this Mac has $(sw_vers -productVersion))."; exit 1; fi
 # ---- the Swift compiler
 if xcode-select -p >/dev/null 2>&1 && command -v swift >/dev/null 2>&1 && swift --version >/dev/null 2>&1; then
   ok "Swift $(swift --version 2>/dev/null | head -1 | sed -n 's/.*Swift version \([0-9.]*\).*/\1/p')"
@@ -90,7 +93,7 @@ else
     ok "Tests pass ($(grep -E '^\s*Executed [0-9]+ tests' build/test.log | tail -1 | sed -E 's/.*Executed ([0-9]+) tests.*/\1/') tests)"
   else
     warn "Some tests failed — see build/test.log:"
-    grep -E "error: -\[|Fatal error" build/test.log | head -5 | sed 's/^/    /'
+    grep -E "error:|Fatal error" build/test.log | head -5 | sed 's/^/    /'
     if ! confirm "Build and install anyway?"; then exit 1; fi
   fi
 fi
