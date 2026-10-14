@@ -34,16 +34,27 @@ public final class S3Storage: Storage, @unchecked Sendable {
 
     // MARK: addressing and signing
 
-    var baseURL: URL {
-        if let e = options.endpoint, let u = URL(string: e.hasSuffix("/") ? String(e.dropLast()) : e), u.host != nil { return u.appendingPathComponent(options.bucket) }
+    /// The bucket's base address, or nil when the bucket/region can't form one (validate() says why).
+    static func baseURL(for o: S3Options) -> URL? {
+        if let e = o.endpoint, let u = URL(string: e.hasSuffix("/") ? String(e.dropLast()) : e), u.host != nil { return u.appendingPathComponent(o.bucket) }
         // a bucket name with a dot does not match Amazon's wildcard certificate: path-style for those
-        if options.bucket.contains(".") { return URL(string: "https://s3.\(options.region).amazonaws.com/\(options.bucket)")! }
-        return URL(string: "https://\(options.bucket).s3.\(options.region).amazonaws.com")!
+        if o.bucket.contains(".") { return URL(string: "https://s3.\(o.region).amazonaws.com/\(o.bucket)") }
+        return URL(string: "https://\(o.bucket).s3.\(o.region).amazonaws.com")
     }
 
-    /// A plain sentence when the service address or bucket name can't work; nil when they look fine.
-    public static func validate(bucket: String, endpoint: String?) -> String? {
+    var baseURL: URL {
+        // validate() runs before any request; this fallback only exists so a bad name can never crash the app
+        S3Storage.baseURL(for: options) ?? URL(string: "https://invalid.invalid")!
+    }
+
+    /// A plain sentence when the service address, bucket or region can't work; nil when they look fine.
+    public static func validate(bucket: String, region: String = "us-east-1", endpoint: String?) -> String? {
         if bucket.isEmpty { return "Enter the bucket's name." }
+        let bucketOK = bucket.count >= 3 && bucket.count <= 63 && bucket.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-") } && !bucket.hasPrefix(".") && !bucket.hasSuffix(".")
+        if !bucketOK { return "“\(bucket)” can't be a bucket name: 3–63 letters, digits, dots and hyphens, no spaces." }
+        let regionOK = !region.isEmpty && region.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+        if !regionOK { return "“\(region)” isn't a region name (they look like us-east-1)." }
+        if baseURL(for: S3Options(bucket: bucket, region: region, endpoint: endpoint, accessKey: "", secretKey: "")) == nil { return "The bucket, region and address don't form a usable web address." }
         if let e = endpoint?.trimmingCharacters(in: .whitespaces), !e.isEmpty {
             guard let u = URL(string: e), let scheme = u.scheme?.lowercased(), ["http", "https"].contains(scheme), u.host != nil else {
                 return "The service address should start with https:// (or http://) and name the server, for example https://minio.local:9000."
@@ -135,7 +146,7 @@ public final class S3Storage: Storage, @unchecked Sendable {
     // MARK: Storage
 
     public func checkReachable() async throws {
-        if let why = S3Storage.validate(bucket: options.bucket, endpoint: options.endpoint) { throw DSError(why) }
+        if let why = S3Storage.validate(bucket: options.bucket, region: options.region, endpoint: options.endpoint) { throw DSError(why) }
         let r = try await send(request("GET", key: "", query: [("list-type", "2"), ("prefix", prefix), ("max-keys", "1")]))
         guard r.ok else { throw fail("listing", r) }
         if !prefix.isEmpty {

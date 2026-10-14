@@ -5,6 +5,8 @@ import Security
 
 public protocol SecretStore: Sendable {
     func secret(for account: String) throws -> String?
+    /// Is a secret saved for this account? Never reads it (reading prompts the Keychain after a rebuild).
+    func has(_ account: String) -> Bool
     func set(_ secret: String, for account: String) throws
     func remove(for account: String) throws
     /// every account with a secret, for the Accounts settings
@@ -56,6 +58,8 @@ public final class KeychainSecrets: SecretStore {
         guard added == errSecSuccess else { throw KeychainSecrets.error(added, "save") }
     }
 
+    public func has(_ account: String) -> Bool { (try? accounts().contains(account)) ?? false }
+
     public func remove(for account: String) throws {
         let status = SecItemDelete(query(account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainSecrets.error(status, "remove") }
@@ -83,18 +87,24 @@ public final class MemorySecrets: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
     public init(_ initial: [String: String] = [:]) { store = initial }
     public func secret(for account: String) throws -> String? { lock.lock(); defer { lock.unlock() }; return store[account] }
+    public func has(_ account: String) -> Bool { lock.lock(); defer { lock.unlock() }; return store[account] != nil }
     public func set(_ secret: String, for account: String) throws { lock.lock(); defer { lock.unlock() }; store[account] = secret }
     public func remove(for account: String) throws { lock.lock(); defer { lock.unlock() }; store.removeValue(forKey: account) }
     public func accounts() throws -> [String] { lock.lock(); defer { lock.unlock() }; return store.keys.sorted() }
 }
 
-/// Looks in `first`, then `second`; writes go to `first`. For trying a sign-in before it is saved.
+/// Looks in `first`, then `second`. Writes of a destination's own secret go to `first` (the typed, not-yet-saved
+/// one); anything else — a cloud account's refreshed tokens — goes to `second`, the real store, so a refresh
+/// made while trying a destination is never thrown away.
 public struct LayeredSecrets: SecretStore {
     public let first: SecretStore
     public let second: SecretStore
     public init(first: SecretStore, second: SecretStore) { self.first = first; self.second = second }
     public func secret(for account: String) throws -> String? { try first.secret(for: account) ?? second.secret(for: account) }
-    public func set(_ secret: String, for account: String) throws { try first.set(secret, for: account) }
+    public func set(_ secret: String, for account: String) throws {
+        if SecretAccount.destinationId(account) != nil { try first.set(secret, for: account) } else { try second.set(secret, for: account) }
+    }
+    public func has(_ account: String) -> Bool { first.has(account) || second.has(account) }
     public func remove(for account: String) throws { try first.remove(for: account) }
     public func accounts() throws -> [String] { Array(Set(try first.accounts() + second.accounts())).sorted() }
 }

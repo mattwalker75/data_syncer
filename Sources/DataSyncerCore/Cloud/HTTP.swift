@@ -73,6 +73,16 @@ public enum HTTP {
 
     /// Downloads the response body straight to a local file.
     public static func download(_ request: URLRequest, to file: URL, service: String) async throws -> HTTPResponse {
+        var attempt = 0
+        while true {
+            let r = try await downloadOnce(request, to: file, service: service)
+            guard let delay = retryDelay(r, attempt: attempt) else { return r }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            attempt += 1
+        }
+    }
+
+    private static func downloadOnce(_ request: URLRequest, to file: URL, service: String) async throws -> HTTPResponse {
         do {
             let (tmp, r) = try await session.download(for: request)
             let resp = make(Data(), r)

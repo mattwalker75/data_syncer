@@ -324,7 +324,9 @@ public final class JobRunner: @unchecked Sendable {
                     if !file.meta.isSymlink { bytes += file.meta.size }
                     if let written = try await storage.stat(file.path) { state.files[file.path] = .init(written: written, source: file.meta) }
                 case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
-                case .failed(let why): result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
+                case .failed(let why):
+                    result.problems.append("\(file.path): \(why)"); state.files.removeValue(forKey: file.path)
+                    if let stop = storage.stopReason() { throw DSError(stop) }   // no point trying 10,000 more files
                 default: break
                 }
                 progress.filesDone += 1
@@ -394,7 +396,9 @@ public final class JobRunner: @unchecked Sendable {
                 switch action {
                 case .copied, .linked: result.copied += 1; copied.append(file.path); if !file.meta.isSymlink { bytes += file.meta.size }
                 case .skipped(let why): result.skipped += 1; result.problems.append("\(file.path): \(why)"); failed.append(file.path)
-                case .failed(let why): result.problems.append("\(file.path): \(why)"); failed.append(file.path)
+                case .failed(let why):
+                    result.problems.append("\(file.path): \(why)"); failed.append(file.path)
+                    if let stop = storage.stopReason() { throw DSError(stop) }
                 default: break
                 }
                 progress.filesDone += 1

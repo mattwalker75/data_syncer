@@ -91,6 +91,16 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
         let r = try await rpc("files/get_metadata", ["path": root])
         if DropboxStorage.isNotFound(r) { throw DSError("The folder \(root) isn't in this Dropbox. Data Syncer never creates the destination folder itself — use “Make this folder” in the destination's settings, or make it in Dropbox, then try again.") }
         guard r.ok else { throw fail("looking at \(root)", r) }
+        guard (r.json()?[".tag"] as? String) == "folder" else { throw DSError("\(root) in this Dropbox is a file, not a folder. Choose a folder.") }
+    }
+
+    /// Dropbox's answer when a chunk arrives at an offset it has already passed (a retried request after a lost
+    /// reply): the offset it wants next.
+    static func correctOffset(_ r: HTTPResponse) -> Int64? {
+        guard r.status == 409, let j = r.json(), let e = j["error"] as? [String: Any] else { return nil }
+        if let io = e["incorrect_offset"] as? [String: Any], let n = io["correct_offset"] as? NSNumber { return n.int64Value }
+        if let lookup = e["lookup_failed"] as? [String: Any], let io = lookup["incorrect_offset"] as? [String: Any], let n = io["correct_offset"] as? NSNumber { return n.int64Value }
+        return nil
     }
 
     public func makeRootFolder() async throws {
@@ -181,6 +191,7 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
         guard s.ok, let sessionId = s.json()?["session_id"] as? String else { throw fail("starting the upload of \(path)", s) }
         var offset = Int64(first.count)
         progress?(offset)
+        var resyncs = 0
         while offset < meta.size {
             try Task.checkCancellation()
             let chunk = try HTTP.chunk(of: localURL, offset: offset, length: DropboxStorage.chunk)
@@ -193,7 +204,13 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
             } else {
                 r = try await uploadContent("files/upload_session/append_v2", arg: ["cursor": cursor, "close": false], data: chunk)
             }
-            guard r.ok else { throw fail("uploading \(path)", r) }
+            if !r.ok {
+                // a chunk Dropbox already took (the reply to the first try was lost): carry on from where it is
+                if let correct = DropboxStorage.correctOffset(r), resyncs < 5 { resyncs += 1; offset = correct; progress?(offset); continue }
+                // a finish that already happened: the file is there with this very commit
+                if last, r.text.contains("closed") || r.text.contains("not_found"), let m = try? await stat(path), m.size == meta.size { offset = meta.size; break }
+                throw fail("uploading \(path)", r)
+            }
             offset += Int64(chunk.count)
             progress?(offset)
         }
@@ -229,6 +246,10 @@ public final class DropboxStorage: Storage, @unchecked Sendable {
         guard resp.ok, let j = resp.json(), let used = (j["used"] as? NSNumber)?.int64Value,
               let alloc = j["allocation"] as? [String: Any], let total = (alloc["allocated"] as? NSNumber)?.int64Value else { return nil }
         return max(0, total - used)
+    }
+
+    public func stopReason() -> String? {
+        tokens.signInRefused ? "The sign-in for this account was refused by the service. Sign in again in Settings → Accounts." : nil
     }
 
     public func makeSymlink(_ path: RelPath, target: String) async throws {

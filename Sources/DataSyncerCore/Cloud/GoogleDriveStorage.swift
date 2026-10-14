@@ -92,8 +92,15 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
         return parent
     }
 
+    /// Drive allows several files with one name in a folder; `walk`, `list` and `stat` must all pick the same one
+    /// whatever order Drive listed them in: the newest modifiedTime, then the greatest id.
+    static func isNewer(_ a: [String: Any], than b: [String: Any]) -> Bool {
+        let da = HTTP.date(a["modifiedTime"] as? String), db = HTTP.date(b["modifiedTime"] as? String)
+        if da != db { return da > db }
+        return (a["id"] as? String ?? "") > (b["id"] as? String ?? "")
+    }
     static func newest(_ files: [[String: Any]]) -> [String: Any]? {
-        files.max { HTTP.date($0["modifiedTime"] as? String) < HTTP.date($1["modifiedTime"] as? String) }
+        files.max { isNewer($1, than: $0) }
     }
 
     private func meta(_ f: [String: Any]) -> FileMeta {
@@ -124,6 +131,7 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
     public func list(_ dir: RelPath) async throws -> [Entry] {
         guard let id = try await id(of: fullPath(dir)) else { return [] }
         var out: [Entry] = []
+        var best: [String: [String: Any]] = [:]   // name → the file chosen so far (for the tie-break)
         var token: String?
         repeat {
             var q = [("q", "'\(id)' in parents and trashed = false"), ("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime)"), ("pageSize", "1000")]
@@ -134,10 +142,11 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
                 guard let name = f["name"] as? String, let fid = f["id"] as? String else { continue }
                 if let i = out.firstIndex(where: { $0.name == name }) {
                     // a duplicate name: keep the newest (the one id(of:) would pick)
-                    if meta(f).modified > out[i].meta.modified { out[i] = Entry(name: name, meta: meta(f)); cache((fullPath(dir) + [name]).joined(separator: "/"), fid) }
+                    if let other = best[name], GoogleDriveStorage.isNewer(f, than: other) { best[name] = f; out[i] = Entry(name: name, meta: meta(f)); cache((fullPath(dir) + [name]).joined(separator: "/"), fid) }
                     continue
                 }
                 cache((fullPath(dir) + [name]).joined(separator: "/"), fid)
+                best[name] = f
                 out.append(Entry(name: name, meta: meta(f)))
             }
             token = json["nextPageToken"] as? String
@@ -172,7 +181,7 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
             var seen: [String: [String: Any]] = [:]
             for f in byParent[parent] ?? [] {
                 guard let name = f["name"] as? String else { continue }
-                if let other = seen[name], HTTP.date(other["modifiedTime"] as? String) >= HTTP.date(f["modifiedTime"] as? String) { continue }
+                if let other = seen[name], !GoogleDriveStorage.isNewer(f, than: other) { continue }
                 seen[name] = f
             }
             for (name, f) in seen {
@@ -271,6 +280,10 @@ public final class GoogleDriveStorage: Storage, @unchecked Sendable {
         let r = try await send(try await request("GET", "\(GoogleDriveStorage.api)/about", query: [("fields", "storageQuota")]))
         guard r.ok, let q = r.json()?["storageQuota"] as? [String: Any], let limit = Int64(q["limit"] as? String ?? ""), let used = Int64(q["usage"] as? String ?? "") else { return nil }
         return max(0, limit - used)
+    }
+
+    public func stopReason() -> String? {
+        tokens.signInRefused ? "The sign-in for this account was refused by the service. Sign in again in Settings → Accounts." : nil
     }
 
     public func makeSymlink(_ path: RelPath, target: String) async throws {

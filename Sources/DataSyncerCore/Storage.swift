@@ -45,12 +45,16 @@ public protocol Storage: AnyObject, Sendable {
     func walk(_ dir: RelPath) async throws -> Snapshot
     /// Called when a run or restore is done with the storage (SSH closes its shared connection). Default: nothing.
     func close() async
+    /// A reason to stop this destination now rather than try the next file (a cloud sign-in the service has
+    /// refused to renew). Default: nil.
+    func stopReason() -> String?
 }
 
 public extension Storage {
     func walk() async throws -> Snapshot { try await walk("") }
     func applyDirectoryMeta(_ path: RelPath, meta: FileMeta) async throws {}
     func close() async {}
+    func stopReason() -> String? { nil }
 
     func walk(_ dir: RelPath) async throws -> Snapshot {
         var out: Snapshot = [:]

@@ -68,6 +68,7 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
         let r = try await send(try await request("GET", item("") + "?$select=id,folder"))
         if r.status == 404 { throw DSError("The folder /\(root) isn't in this OneDrive. Data Syncer never creates the destination folder itself — use “Make this folder” in the destination's settings, or make it in OneDrive, then try again.") }
         guard r.ok else { throw fail("looking at /\(root)", r) }
+        guard r.json()?["folder"] != nil else { throw DSError("/\(root) in this OneDrive is a file, not a folder. Choose a folder.") }
     }
 
     public func makeRootFolder() async throws {
@@ -116,16 +117,20 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
         let base = joinPath(root, dir)
         var out: Snapshot = [:]
         var next: String? = item(dir, suffix: "delta") + "?$select=id,name,size,folder,file,fileSystemInfo,parentReference,deleted"
-        let basePathPrefix = "/drive/root:" + (base.isEmpty ? "" : "/" + base)
+        // OneDrive paths are case-insensitive and Graph reports the stored casing: compare case-insensitively
+        let basePathPrefix = ("/drive/root:" + (base.isEmpty ? "" : "/" + base)).lowercased()
         while let url = next {
             let r = try await send(try await request("GET", url))
-            if r.status == 404 { return [:] }
+            // checkReachable proved the folder exists, so a 404 (or a drive that has no delta below the root)
+            // means the listing failed — fall back to folder by folder rather than report an empty destination
+            if r.status == 404 || r.status == 400 || r.status == 501 { return try await walkByFolder(dir) }
             guard r.ok, let j = r.json() else { throw fail("listing \(dir)", r) }
             for e in (j["value"] as? [[String: Any]]) ?? [] {
                 guard e["deleted"] == nil, let name = e["name"] as? String, let parent = (e["parentReference"] as? [String: Any])?["path"] as? String else { continue }
                 // parentReference.path is "/drive/root:/Backups/Work/sub" (percent-encoded)
                 let decoded = parent.removingPercentEncoding ?? parent
-                guard decoded == basePathPrefix || decoded.hasPrefix(basePathPrefix + "/") else { continue }   // the folder itself comes back too
+                let lowered = decoded.lowercased()
+                guard lowered == basePathPrefix || lowered.hasPrefix(basePathPrefix + "/") else { continue }   // the folder itself comes back too
                 let relParent = String(decoded.dropFirst(basePathPrefix.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 let rel = relParent.isEmpty ? name : relParent + "/" + name
                 if dir.isEmpty, rel == Records.folderName || rel.hasPrefix(Records.folderName + "/") { continue }
@@ -133,6 +138,23 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
             }
             next = j["@odata.nextLink"] as? String
             if next == nil, j["@odata.deltaLink"] != nil { break }
+        }
+        return out
+    }
+
+    /// The protocol's default walk (one request per folder), for drives without delta on a sub-folder.
+    private func walkByFolder(_ dir: RelPath) async throws -> Snapshot {
+        var out: Snapshot = [:]
+        var queue: [RelPath] = [dir]
+        var next = 0
+        while next < queue.count {
+            let current = queue[next]; next += 1
+            for entry in try await list(current) {
+                let path = current.isEmpty ? entry.name : current + "/" + entry.name
+                if current.isEmpty && entry.name == Records.folderName { continue }
+                out[path] = entry.meta
+                if entry.meta.isDirectory && !entry.meta.isSymlink { queue.append(path) }
+            }
         }
         return out
     }
@@ -170,6 +192,7 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
         let s = try await send(try await request("POST", item(path, suffix: "createUploadSession"), json: body))
         guard s.ok, let uploadURL = s.json()?["uploadUrl"] as? String else { throw fail("starting the upload of \(path)", s) }
         var offset: Int64 = 0
+        var resyncs = 0
         do {
             while offset < meta.size {
                 try Task.checkCancellation()
@@ -179,7 +202,18 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
                 put.httpMethod = "PUT"
                 put.setValue("bytes \(offset)-\(offset + Int64(chunk.count) - 1)/\(meta.size)", forHTTPHeaderField: "Content-Range")
                 let r = try await HTTP.upload(put, data: chunk, service: "OneDrive")
+                if r.status == 416 || r.status == 409 {
+                    // the service already holds (some of) this fragment — a retried request after a lost answer:
+                    // ask where it stands and carry on from there
+                    guard resyncs < 5 else { throw fail("uploading \(path)", r) }
+                    resyncs += 1
+                    let status = try await HTTP.send(URLRequest(url: URL(string: uploadURL)!), service: "OneDrive")
+                    if status.ok, let next = OneDriveStorage.nextExpected(status.json()) { offset = next; continue }
+                    if status.ok, (status.json()?["nextExpectedRanges"] as? [String])?.isEmpty == true { offset = meta.size; break }   // all received
+                    throw fail("uploading \(path)", r)
+                }
                 guard r.ok || r.status == 202 else { throw fail("uploading \(path)", r) }
+                if r.status == 200 || r.status == 201 { offset = meta.size; progress?(offset); break }   // the item came back: done
                 offset += Int64(chunk.count)
                 progress?(offset)
             }
@@ -215,8 +249,18 @@ public final class OneDriveStorage: Storage, @unchecked Sendable {
         return remaining
     }
 
+    public func stopReason() -> String? {
+        tokens.signInRefused ? "The sign-in for this account was refused by the service. Sign in again in Settings → Accounts." : nil
+    }
+
     public func makeSymlink(_ path: RelPath, target: String) async throws {
         throw DSError("OneDrive can't hold links, so this link was skipped (it points to \(target)).")
+    }
+
+    /// "12345-" or "12345-67890" from an upload session's nextExpectedRanges → the next offset to send.
+    static func nextExpected(_ json: [String: Any]?) -> Int64? {
+        guard let ranges = json?["nextExpectedRanges"] as? [String], let first = ranges.first else { return nil }
+        return Int64(first.split(separator: "-").first ?? "")
     }
 
     public static func whoAmI(_ tokens: TokenProvider) async throws -> String {

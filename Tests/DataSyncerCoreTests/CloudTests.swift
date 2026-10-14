@@ -199,8 +199,8 @@ final class S3Tests: XCTestCase {
         do { try await st.remove("locked.txt"); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("would not delete w/locked.txt"), e.message) }
         do { try await st.remove(""); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("Refusing")) }
         XCTAssertEqual(S3Storage.xmlUnescape("a&#13;b&#x41;c&amp;&lt;&unknown;"), "a\rbAc&<&unknown;")
-        XCTAssertNil(S3Storage.validate(bucket: "b", endpoint: "https://minio.local:9000"))
-        XCTAssertNotNil(S3Storage.validate(bucket: "b", endpoint: "minio.local:9000"))
+        XCTAssertNil(S3Storage.validate(bucket: "bkt", endpoint: "https://minio.local:9000"))
+        XCTAssertNotNil(S3Storage.validate(bucket: "bkt", endpoint: "minio.local:9000"))
         XCTAssertNotNil(S3Storage.validate(bucket: "", endpoint: nil))
         let dotted = S3Storage(options: S3Options(bucket: "my.photos", region: "eu-west-1", accessKey: "k", secretKey: "s"), folder: "")
         XCTAssertEqual(dotted.url(key: "x").absoluteString, "https://s3.eu-west-1.amazonaws.com/my.photos/x")
@@ -375,5 +375,180 @@ final class OAuthProviderTests: XCTestCase {
         let (v, c) = OAuth.pkce()
         XCTAssertEqual(c, OAuth.base64url(Hashing.sha256(Data(v.utf8))))
         XCTAssertFalse(c.contains("=") || c.contains("+") || c.contains("/"))
+    }
+}
+
+// MARK: - second review (each reproduced by a verifier before it was fixed)
+
+final class CloudSecondReviewTests: XCTestCase {
+    override func tearDown() { FakeHTTP.uninstall() }
+
+    func provider(_ p: CloudProvider, expired: Bool = false) -> TokenProvider {
+        TokenProvider(config: p.oauthConfig(clientId: "cid", clientSecret: p == .googleDrive ? "sec" : nil)!,
+                      tokens: OAuthTokens(accessToken: "old", refreshToken: "r1", expiresAt: expired ? .distantPast : Date().addingTimeInterval(3600))) { _ in }
+    }
+
+    func testS3BadNamesNeverCrash() async throws {
+        XCTAssertNotNil(S3Storage.validate(bucket: "my bucket", endpoint: nil))
+        XCTAssertNotNil(S3Storage.validate(bucket: "ok", region: "us east-1", endpoint: nil))
+        XCTAssertNil(S3Storage.validate(bucket: "my.photos", region: "eu-west-1", endpoint: nil))
+        let st = S3Storage(options: S3Options(bucket: "my bucket", region: "us-east-1", accessKey: "k", secretKey: "s"), folder: "")
+        _ = st.url(key: "x")   // must not trap
+        FakeHTTP.install { _, _ in (200, [:], Data()) }
+        do { try await st.checkReachable(); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("can't be a bucket name"), e.message) }
+    }
+
+    func testOneDriveCaseInsensitiveWalkAnd404Fallback() async throws {
+        let delta404 = Locked(false)
+        FakeHTTP.install { req, _ in
+            let path = req.url!.path.removingPercentEncoding ?? req.url!.path
+            if path.hasSuffix(":/delta") { return delta404.value ? (404, [:], Data()) : (200, [:], Data(#"{"value":[{"name":"a.txt","size":12,"file":{},"parentReference":{"path":"/drive/root:/Backups/Work"}},{"name":"sub","folder":{},"parentReference":{"path":"/drive/root:/Backups/Work"}}],"@odata.deltaLink":"x"}"#.utf8)) }
+            if path.hasSuffix(":/children") {
+                if path.lowercased().contains("/sub:") { return (200, [:], Data(#"{"value":[{"name":"deep.txt","size":1,"file":{}}]}"#.utf8)) }
+                return (200, [:], Data(#"{"value":[{"name":"a.txt","size":12,"file":{}},{"name":"sub","folder":{}}]}"#.utf8))
+            }
+            return (200, [:], Data(#"{"id":"1","folder":{}}"#.utf8))   // any casing, like OneDrive
+        }
+        let st = OneDriveStorage(tokens: provider(.oneDrive), folder: "Backups/work", accountLabel: "me")
+        try await st.checkReachable()
+        let walked = try await st.walk()
+        XCTAssertEqual(Set(walked.keys), ["a.txt", "sub"], "a case difference in the typed folder must not empty the listing")
+        delta404.value = true
+        let fallback = try await st.walk()
+        XCTAssertEqual(Set(fallback.keys), ["a.txt", "sub", "sub/deep.txt"], "a 404 on delta falls back to folder-by-folder listing")
+    }
+
+    func testAFileAtTheDestinationPathIsRefused() async throws {
+        FakeHTTP.install { req, _ in
+            if req.url!.host == "api.dropboxapi.com" { return (200, [:], Data(#"{".tag":"file","name":"Work","path_display":"/Work"}"#.utf8)) }
+            return (200, [:], Data(#"{"id":"1","file":{}}"#.utf8))
+        }
+        do { try await DropboxStorage(tokens: provider(.dropbox), folder: "/Work", accountLabel: "me").checkReachable(); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("is a file, not a folder"), e.message) }
+        do { try await OneDriveStorage(tokens: provider(.oneDrive), folder: "Work", accountLabel: "me").checkReachable(); XCTFail() } catch let e as DSError { XCTAssertTrue(e.message.contains("is a file, not a folder"), e.message) }
+    }
+
+    func testDropboxResyncsAfterALostReply() async throws {
+        let s = Scratch(); let file = s.dir("f").appendingPathComponent("big.bin")
+        try Data(repeating: 3, count: 17 * 1024 * 1024).write(to: file)
+        let appends = Locked(0)
+        FakeHTTP.install { req, body in
+            let p = req.url!.path
+            if p.hasSuffix("upload_session/start") { return (200, [:], Data(#"{"session_id":"S"}"#.utf8)) }
+            if p.hasSuffix("append_v2") {
+                let n = appends.with { $0 += 1; return $0 }
+                if n == 1 { return (503, ["Retry-After": "0"], Data()) }                                   // taken, reply lost
+                if n == 2 { return (409, [:], Data(#"{"error_summary":"incorrect_offset/","error":{".tag":"incorrect_offset","incorrect_offset":{"correct_offset":16777216}}}"#.utf8)) }
+                return (200, [:], Data("{}".utf8))
+            }
+            if p.hasSuffix("upload_session/finish") { return (200, [:], Data(#"{"name":"big.bin"}"#.utf8)) }
+            return (404, [:], Data())
+        }
+        let st = DropboxStorage(tokens: provider(.dropbox), folder: "/W", accountLabel: "me")
+        try await st.upload(localURL: file, to: "big.bin", meta: FileMeta(size: 17 * 1024 * 1024, modified: 1), progress: nil)
+        XCTAssertEqual(appends.value, 2, "the retried chunk is not sent a third time; the upload carries on from Dropbox's offset")
+    }
+
+    func testOneDriveResyncsAfter416() async throws {
+        let s = Scratch(); let file = s.dir("f").appendingPathComponent("big.bin")
+        try Data(repeating: 3, count: 5 * 1024 * 1024).write(to: file)
+        let puts = Locked<[String]>([])
+        FakeHTTP.install { req, _ in
+            if req.url!.path.hasSuffix("createUploadSession") { return (200, [:], Data(#"{"uploadUrl":"https://up.fake/session"}"#.utf8)) }
+            if req.url!.host == "up.fake" {
+                if req.httpMethod == "GET" { return (200, [:], Data(#"{"nextExpectedRanges":[]}"#.utf8)) }   // everything received
+                let n = puts.with { $0.append(req.value(forHTTPHeaderField: "Content-Range") ?? ""); return $0.count }
+                if n == 1 { return (503, ["Retry-After": "0"], Data()) }
+                return (416, [:], Data(#"{"error":{"message":"overlaps"}}"#.utf8))
+            }
+            return (200, [:], Data("{}".utf8))
+        }
+        let st = OneDriveStorage(tokens: provider(.oneDrive), folder: "W", accountLabel: "me")
+        try await st.upload(localURL: file, to: "big.bin", meta: FileMeta(size: 5 * 1024 * 1024, modified: 1), progress: nil)
+        XCTAssertEqual(puts.value.count, 2)
+        XCTAssertEqual(OneDriveStorage.nextExpected(["nextExpectedRanges": ["12345-"]]), 12345)
+    }
+
+    func testDeadSignInStopsTheDestinationAfterOneRefresh() async throws {
+        let s = Scratch(); let src = s.dir("src")
+        var files: [String: String] = [:]; for i in 0..<20 { files["f\(i).txt"] = "x" }
+        makeTree(src, files)
+        let tokenCalls = Locked(0)
+        FakeHTTP.install { req, _ in
+            if req.url!.host == "oauth2.googleapis.com" { tokenCalls.with { $0 += 1 }; return (400, [:], Data(#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#.utf8)) }
+            let q = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!.queryItems?.first { $0.name == "q" }?.value ?? ""
+            if q.contains("name = 'W'") { return (200, [:], Data(#"{"files":[{"id":"W","mimeType":"application/vnd.google-apps.folder"}]}"#.utf8)) }
+            if q == "trashed = false" { return (200, [:], Data(#"{"files":[{"id":"W","name":"W","mimeType":"application/vnd.google-apps.folder","parents":["root"]}]}"#.utf8)) }
+            if req.url!.path == "/drive/v3/files", req.httpMethod == "GET" { return (200, [:], Data(#"{"files":[]}"#.utf8)) }
+            if req.url!.path == "/drive/v3/files", req.httpMethod == "POST" { return (200, [:], Data(#"{"id":"N"}"#.utf8)) }
+            if req.url!.path.contains("/upload/") { return (401, [:], Data(#"{"error":{"message":"expired"}}"#.utf8)) }   // revoked mid-run
+            if req.url!.path.hasSuffix("/about") { return (200, [:], Data(#"{"storageQuota":{"limit":"100000000","usage":"0"}}"#.utf8)) }
+            return (200, [:], Data(#"{"files":[]}"#.utf8))
+        }
+        let accounts = CloudAccountStore(url: s.root.appendingPathComponent("accounts.json"))
+        let account = CloudAccount(provider: .googleDrive, label: "me", clientId: "cid")
+        try accounts.save([account])
+        let secrets = MemorySecrets()
+        try CloudSecret(tokens: OAuthTokens(accessToken: "ok", refreshToken: "r", expiresAt: Date().addingTimeInterval(3600)), clientSecret: "s").save(account.id, to: secrets)
+        let job = Job(name: "G", sourcePath: src.path, destinations: [Destination(name: "drive", kind: .googleDrive(account: account.id.uuidString), folder: "W", mode: .sync(deleteExtras: false))])
+        let r = JobRunner(factory: DefaultStorageFactory(secrets: secrets, accounts: accounts)); r.otherJobIds = { _ in [] }
+        let report = await r.run(job) { _ in }
+        if case .failed(let why) = report.results[0].status { XCTAssertTrue(why.contains("Sign in again"), why) } else { XCTFail("\(report.results[0].status)") }
+        XCTAssertLessThanOrEqual(tokenCalls.value, 2, "one refresh attempt, not one per file")
+        XCTAssertLessThanOrEqual(report.results[0].problems.count, 2)
+    }
+
+    func testOneRefreshForConcurrentCallers() async throws {
+        let calls = Locked(0)
+        FakeHTTP.install { _, _ in calls.with { $0 += 1 }; Thread.sleep(forTimeInterval: 0.2); return (200, [:], Data(#"{"access_token":"new","expires_in":3600}"#.utf8)) }
+        let tp = provider(.dropbox, expired: true)
+        async let a = tp.accessToken()
+        async let b = tp.accessToken()
+        let (x, y) = try await (a, b)
+        XCTAssertEqual(x, "new"); XCTAssertEqual(y, "new")
+        XCTAssertEqual(calls.value, 1)
+    }
+
+    func testDownloadRetriesWhenThrottled() async throws {
+        let s = Scratch()
+        let n = Locked(0)
+        FakeHTTP.install { _, _ in n.with { $0 += 1; return $0 } == 1 ? (429, ["Retry-After": "0"], Data()) : (200, [:], Data("body".utf8)) }
+        let file = s.dir("d").appendingPathComponent("f")
+        let r = try await HTTP.download(URLRequest(url: URL(string: "https://x.test/f")!), to: file, service: "x")
+        XCTAssertEqual(r.status, 200); XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "body")
+    }
+
+    func testLayeredSecretsSendCloudTokensToTheRealStore() throws {
+        let typed = MemorySecrets(), real = MemorySecrets()
+        let layered = LayeredSecrets(first: typed, second: real)
+        let d = UUID(), c = UUID()
+        try layered.set("pw", for: SecretAccount.destination(d))
+        try layered.set("{tokens}", for: SecretAccount.cloud(c))
+        XCTAssertEqual(try typed.secret(for: SecretAccount.destination(d)), "pw")
+        XCTAssertNil(try typed.secret(for: SecretAccount.cloud(c)))
+        XCTAssertEqual(try real.secret(for: SecretAccount.cloud(c)), "{tokens}")
+        XCTAssertTrue(layered.has(SecretAccount.cloud(c))); XCTAssertFalse(layered.has("nope"))
+    }
+
+    func testGoogleTieBreakIsTheSameEverywhere() async throws {
+        let a: [String: Any] = ["id": "A", "name": "a.txt", "mimeType": "text/plain", "size": "12", "modifiedTime": "2026-10-13T21:04:05Z", "parents": ["F"]]
+        let old: [String: Any] = ["id": "A-old", "name": "a.txt", "mimeType": "text/plain", "size": "5", "modifiedTime": "2026-10-13T21:04:05Z", "parents": ["F"]]
+        let folder: [String: Any] = ["id": "F", "name": "W", "mimeType": "application/vnd.google-apps.folder", "parents": ["root"]]
+        func json(_ files: [[String: Any]]) -> Data { HTTP.json(["files": files]) }
+        FakeHTTP.install { req, _ in
+            let q = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!.queryItems?.first { $0.name == "q" }?.value ?? ""
+            if req.url!.path == "/drive/v3/files" {
+                if q == "trashed = false" { return (200, [:], json([old, a, folder])) }          // one order here…
+                if q.contains("name = 'W'") { return (200, [:], json([folder])) }
+                if q.contains("name = 'a.txt'") { return (200, [:], json([a, old])) }           // …another there
+                if q.contains("'F' in parents and trashed") { return (200, [:], json([old, a])) }
+            }
+            if req.url!.path.hasPrefix("/drive/v3/files/") { let id = req.url!.lastPathComponent; return (200, [:], HTTP.json(id == "A" ? a : old)) }
+            return (404, [:], Data())
+        }
+        let walked = try await GoogleDriveStorage(tokens: provider(.googleDrive), folder: "W", accountLabel: "me").walk()
+        let listed = try await GoogleDriveStorage(tokens: provider(.googleDrive), folder: "W", accountLabel: "me").list("")
+        let stat = try await GoogleDriveStorage(tokens: provider(.googleDrive), folder: "W", accountLabel: "me").stat("a.txt")
+        // same date: the greatest id wins ("A-old" > "A"), and every path agrees
+        XCTAssertEqual(walked["a.txt"]?.size, 5); XCTAssertEqual(listed.first?.meta.size, 5); XCTAssertEqual(stat?.size, 5)
     }
 }

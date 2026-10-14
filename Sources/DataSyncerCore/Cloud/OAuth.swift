@@ -47,6 +47,7 @@ public enum OAuth {
         let listener = try LoopbackListener(port: port)
         defer { listener.stop() }
         if let open { open(url) } else { _ = try? await Shell.run("/usr/bin/open", [url.absoluteString]) }
+        try Task.checkCancellation()   // the sheet may have closed while the browser was opening
         // closing the sheet (cancelling the task) frees the port at once instead of five minutes later
         let params = try await withTaskCancellationHandler {
             try await listener.waitForCallback(timeout: 300)
@@ -109,26 +110,48 @@ public final class TokenProvider: @unchecked Sendable {
     private let lock = NSLock()
     /// one refresh at a time: two callers must not both refresh (Microsoft rotates refresh tokens)
     private var refreshing: Task<OAuthTokens, Error>?
+    /// a refresh the service refused outright (the sign-in is dead): remembered so a 10,000-file run makes one
+    /// token request and reports one problem, not 10,000
+    private var refused: DSError?
 
     public init(config: OAuthConfig, tokens: OAuthTokens, save: @escaping @Sendable (OAuthTokens) -> Void) {
         self.config = config; self.tokens = tokens; self.save = save
     }
 
     public func accessToken() async throws -> String {
-        lock.lock(); let t = tokens; let inFlight = refreshing; lock.unlock()
-        if t.expiresAt.timeIntervalSinceNow > 60 { return t.accessToken }
-        if let inFlight { return try await inFlight.value.accessToken }
-        let task = Task { [config] in try await OAuth.refresh(config, t) }
-        lock.lock(); refreshing = task; lock.unlock()
-        defer { lock.lock(); refreshing = nil; lock.unlock() }
-        let fresh = try await task.value
-        lock.lock(); tokens = fresh; lock.unlock()
-        save(fresh)
-        return fresh.accessToken
+        // check-and-set under one lock: two callers must not both start a refresh
+        lock.lock()
+        let t = tokens
+        if t.expiresAt.timeIntervalSinceNow > 60 { lock.unlock(); return t.accessToken }
+        if let refused { lock.unlock(); throw refused }
+        let task: Task<OAuthTokens, Error>
+        let mine: Bool
+        if let inFlight = refreshing { task = inFlight; mine = false }
+        else { task = Task { [config] in try await OAuth.refresh(config, t) }; refreshing = task; mine = true }
+        lock.unlock()
+        do {
+            let fresh = try await task.value
+            if mine {
+                lock.lock(); tokens = fresh; refreshing = nil; lock.unlock()
+                save(fresh)
+            }
+            return fresh.accessToken
+        } catch {
+            if mine {
+                lock.lock()
+                refreshing = nil
+                if let e = error as? DSError, e.message.contains("Sign in again") { refused = e }
+                lock.unlock()
+            }
+            throw error
+        }
     }
 
     /// After a 401: throw the saved token away so the next call refreshes.
     public func invalidate() { lock.lock(); tokens.expiresAt = .distantPast; lock.unlock() }
+
+    /// Is the sign-in known to be dead (a refresh was refused)? The runner stops a destination on this.
+    public var signInRefused: Bool { lock.lock(); defer { lock.unlock() }; return refused != nil }
 }
 
 /// Waits for the browser to come back to http://localhost:<port>/callback?code=…
