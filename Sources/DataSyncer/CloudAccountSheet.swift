@@ -34,7 +34,7 @@ struct CloudAccountSheet: View {
                     HStack(spacing: 6) { Dot(color: s.ok ? Theme.good : Theme.problem); Text(s.text).font(.system(size: 12)).lineLimit(3) }
                         .frame(maxWidth: 420, alignment: .leading).help(s.text)
                 } else if working {
-                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(provider == .s3 ? "Checking the keys…" : "Waiting for the sign-in in your browser…").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text(provider == .s3 ? "Saving…" : "Waiting for the sign-in in your browser…").font(.system(size: 12)).foregroundStyle(.secondary) }
                 }
                 Spacer()
                 Button("Cancel") { task?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)

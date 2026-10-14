@@ -26,7 +26,7 @@ struct RunOptionsSheet: View {
                             Image(systemName: Formatting.icon(d.kind)).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(i + 1) · \(d.name)").fontWeight(.semibold)
-                                Text(d.enabled ? what(d) : "off — skipped this run").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                                Text(d.enabled ? what(d) : "off — skipped").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
                                 if let n = chainNotes[d.id] {
                                     HStack(alignment: .firstTextBaseline, spacing: 5) { Dot(color: n.ok ? Theme.good : Theme.attention, size: 6); Text(n.text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3) }
                                 }
@@ -58,10 +58,10 @@ struct RunOptionsSheet: View {
     private func lookUpChains() async {
         for d in job.destinations where d.enabled {
             guard case .fullIncremental = d.mode else { continue }
-            let check = await Preflight.check(job, d, factory: DefaultStorageFactory(accounts: model.accountStore), otherJobIds: model.otherJobIds(job))
-            guard check.items.first?.ok == true else { continue }
-            chainNotes[d.id] = (check.canIncremental, check.canIncremental ? check.incrementalNote : check.incrementalNote + " The next backup will be a full one.")
-            if !check.canIncremental, choices[d.id] == nil { choices[d.id] = .full }
+            // a light lookup (no write probe), dropped when the sheet closes
+            guard let chain = await Preflight.chain(job, d, factory: DefaultStorageFactory(accounts: model.accountStore)), !Task.isCancelled, !chain.note.isEmpty else { continue }
+            chainNotes[d.id] = (chain.canIncremental, chain.canIncremental ? chain.note : chain.note + " The next backup will be a full one.")
+            if !chain.canIncremental, choices[d.id] == nil { choices[d.id] = .full }
         }
     }
 
@@ -263,7 +263,7 @@ struct RunScreen: View {
             ForEach(r.results, id: \.destinationId) { d in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Formatting.line(for: d)).font(.system(size: 12.5))
-                    ForEach(d.problems.prefix(10), id: \.self) { Text("   \($0)").font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                    ForEach(Array(d.problems.prefix(10).enumerated()), id: \.offset) { Text("   \($0.element)").font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
                     if d.problems.count > 10 { Text("   …and \(d.problems.count - 10) more").font(.system(size: 12)).foregroundStyle(.secondary) }
                 }
             }
@@ -350,8 +350,14 @@ struct SyncPreviewSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Skip this destination") { request.answer(false) }
-                Button(plan.warning == nil ? "Go ahead" : "Go ahead anyway") { request.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                // with a warning, Return means Skip: a flagged wipe takes a deliberate click
+                if plan.warning == nil {
+                    Button("Skip this destination") { request.answer(false) }
+                    Button("Go ahead") { request.answer(true) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                } else {
+                    Button("Skip this destination") { request.answer(false) }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    Button("Go ahead anyway") { request.answer(true) }
+                }
             }
         }
         .padding(20)

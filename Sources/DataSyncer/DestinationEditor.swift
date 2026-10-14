@@ -288,7 +288,7 @@ struct DestinationEditor: View {
         configHosts = SSHInfo.configHosts(at: SSHInfo.sshDir.appendingPathComponent("config"))
         guard let d = destination else { volume = volumes.first ?? ""; keyPath = sshKeys.first?.path ?? ""; return }
         name = d.name; folder = d.folder; enabled = d.enabled; backupTitle = d.backupTitle
-        hadSecret = (try? model.secrets.secret(for: SecretAccount.destination(d.id))) != nil
+        hadSecret = model.secrets.has(SecretAccount.destination(d.id))   // never reads it (that prompts the Keychain)
         switch d.kind {
         case .usbDrive(let v): kind = .usb; volume = v
         case .localFolder: kind = folder.contains("com~apple~CloudDocs") ? .iCloud : .folder
@@ -297,7 +297,7 @@ struct DestinationEditor: View {
             if var c = URLComponents(string: urlString) { shareUser = c.user?.removingPercentEncoding ?? ""; c.user = nil; c.password = nil; shareAddress = c.string ?? urlString } else { shareAddress = urlString }
         case .sftp(let h, let p, let u, let k):
             kind = .sftp; host = h; port = String(p); user = u
-            if let k { auth = .key; keyPath = k } else { auth = hadSecret ? .password : .terminal }
+            if let k { auth = .key; keyPath = k } else { auth = d.usesPassword == true ? .password : .terminal }
             loadedAuth = auth
         case .s3(let a, let b, let r, let e): kind = .s3; accountId = a; bucket = b; region = r; endpoint = e ?? ""
         case .googleDrive(let a): kind = .googleDrive; accountId = a
@@ -337,7 +337,8 @@ struct DestinationEditor: View {
         case .fullIncremental: m = .fullIncremental(chainStart: chainStart, maxIncrementals: maxIncrementals)
         }
         return Destination(id: destination?.id ?? UUID(), name: name.trimmingCharacters(in: .whitespaces), kind: k,
-                           folder: folder.trimmingCharacters(in: .whitespaces), mode: m, enabled: enabled, backupTitle: backupTitle)
+                           folder: folder.trimmingCharacters(in: .whitespaces), mode: m, enabled: enabled, backupTitle: backupTitle,
+                           usesPassword: kind == .sftp ? auth == .password : nil)
     }
 
     /// The secret to use: what was typed, else what is saved (when it is the right kind for the method chosen).
@@ -367,6 +368,7 @@ struct DestinationEditor: View {
             }
             try await storage.checkReachable()
             testResult = (true, "The folder is there: \(storage.describe)")
+            await storage.close()
         } catch let e as DSError { testResult = (false, e.message) } catch { testResult = (false, error.localizedDescription) }
         makingFolder = false
     }
@@ -379,7 +381,7 @@ struct DestinationEditor: View {
             try await storage.checkReachable()
             let free = (try? await storage.freeSpace()).flatMap { $0 }.map { " · \(Formatting.bytes($0)) free" } ?? ""
             testResult = (true, "Connected: \(storage.describe)\(free)")
-            if let s = storage as? SSHStorage { await s.client.close() }
+            await storage.close()
         } catch let e as DSError { testResult = (false, e.message) } catch { testResult = (false, error.localizedDescription) }
         testing = false
     }

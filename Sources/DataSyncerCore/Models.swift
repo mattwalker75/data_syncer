@@ -126,11 +126,13 @@ public struct Destination: Codable, Equatable, Identifiable, Sendable {
     public var enabled: Bool
     /// the <title> in "2026_10_20_1432_Full_<title>"; empty = the job's name
     public var backupTitle: String
+    /// (SSH) the user chose a password rather than keys — stored here, never inferred from the Keychain
+    public var usesPassword: Bool?
 
     public init(id: UUID = UUID(), name: String, kind: DestinationKind, folder: String, mode: DestinationMode,
-                enabled: Bool = true, backupTitle: String = "") {
+                enabled: Bool = true, backupTitle: String = "", usesPassword: Bool? = nil) {
         self.id = id; self.name = name; self.kind = kind; self.folder = folder; self.mode = mode
-        self.enabled = enabled; self.backupTitle = backupTitle
+        self.enabled = enabled; self.backupTitle = backupTitle; self.usesPassword = usesPassword
     }
 }
 
@@ -161,6 +163,8 @@ public struct Job: Codable, Equatable, Identifiable, Sendable {
         j.name = newName
         return j
     }
+
+    public func withSource(_ path: String) -> Job { var j = self; j.sourcePath = path; return j }
 
     /// The title used in a destination's backup folder names.
     public func backupTitle(for destination: Destination) -> String {

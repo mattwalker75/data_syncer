@@ -162,7 +162,7 @@ struct RestoreScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) { Dot(color: session.outcome.color); Text(session.outcome.text).fontWeight(.semibold).foregroundStyle(session.outcome.color) }
                     if case .failed(let why) = r.status { Text(why).font(.system(size: 12.5)).textSelection(.enabled) }
-                    ForEach(r.problems.prefix(10), id: \.self) { Text($0).font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                    ForEach(Array(r.problems.prefix(10).enumerated()), id: \.offset) { Text($0.element).font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
                     if r.problems.count > 10 { Text("…and \(r.problems.count - 10) more").font(.system(size: 12)).foregroundStyle(.secondary) }
                     if r.status == .finished { Text("The files are in \(session.target.path).").font(.system(size: 12.5)) }
                 }

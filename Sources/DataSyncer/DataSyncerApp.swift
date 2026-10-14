@@ -11,7 +11,7 @@ struct DataSyncerApp: App {
         Window("Data Syncer", id: "main") {
             MainWindow()
                 .environmentObject(model)
-                .preferredColorScheme(model.settings.effectiveAppearance.colorScheme)
+                .preferredColorScheme(model.lookInForce.colorScheme)
                 .tint(Theme.accent)
                 .frame(minWidth: 900, minHeight: 600)
         }
@@ -34,7 +34,7 @@ struct DataSyncerApp: App {
         Settings {
             SettingsView()
                 .environmentObject(model)
-                .preferredColorScheme(model.settings.effectiveAppearance.colorScheme)
+                .preferredColorScheme(model.lookInForce.colorScheme)
                 .tint(Theme.accent)
         }
     }

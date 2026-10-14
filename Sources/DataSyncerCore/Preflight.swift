@@ -104,6 +104,17 @@ public enum Preflight {
         return out
     }
 
+    /// What a Full + incremental destination's chain allows right now — opens the storage and reads the catalog,
+    /// nothing else (no write probe), and stops when the task is cancelled. For the Run… sheet.
+    public static func chain(_ job: Job, _ d: Destination, factory: StorageFactory = DefaultStorageFactory()) async -> (canIncremental: Bool, note: String)? {
+        guard case .fullIncremental(let start, let max) = d.mode else { return nil }
+        guard let storage = try? await factory.storage(for: d), (try? await storage.checkReachable()) != nil else { return nil }
+        defer { Task.detached { await storage.close() } }
+        guard !Task.isCancelled, let catalog = try? await BackupCatalog.load(from: storage, title: job.backupTitle(for: d)) else { return nil }
+        let (_, soFar, reason) = catalog.incrementalParent(chainStart: start, maxIncrementals: max)
+        return (reason == nil, reason ?? "an incremental is possible (\(soFar) of \(max) in the current chain)")
+    }
+
     static func when(_ date: Date) -> String {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full

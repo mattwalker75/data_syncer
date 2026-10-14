@@ -27,6 +27,7 @@ struct AppearancePane: View {
                     ForEach(AccentChoice.allCases) { a in
                         Button {
                             model.settings.accent = a.color
+                            customAccent = a.color.color
                         } label: {
                             Circle().fill(a.color.color).frame(width: 22, height: 22)
                                 .overlay(Circle().strokeBorder(Color.primary.opacity(model.settings.accent == a.color ? 0.8 : 0), lineWidth: 2))
@@ -157,7 +158,7 @@ struct ThemeEditor: View {
         .onChange(of: problem) { _, _ in live() }.onChange(of: tintSidebar) { _, _ in live() }.onChange(of: sidebar) { _, _ in live() }
         .onChange(of: tintCards) { _, _ in live() }.onChange(of: cards) { _, _ in live() }.onChange(of: theme.look) { _, _ in live() }
         // closing the sheet any other way (⌘W, quitting) puts the saved settings back
-        .onDisappear { if !saved { Theme.apply(model.settings); model.objectWillChange.send() } }
+        .onDisappear { model.previewLook = nil; if !saved { Theme.apply(model.settings); model.objectWillChange.send() } }
     }
 
     private var preview: some View {
@@ -167,7 +168,7 @@ struct ThemeEditor: View {
             HStack(spacing: 6) { Dot(color: attention); Text("1 problem") }
             HStack(spacing: 6) { Dot(color: problem); Text("Failed") }
             Spacer()
-            Button("Run…") {}.buttonStyle(.borderedProminent).tint(accent)
+            Button("Run…") {}.buttonStyle(.borderedProminent).tint(accent).allowsHitTesting(false).accessibilityHidden(true)
         }
         .font(.system(size: 12.5))
     }
@@ -192,6 +193,7 @@ struct ThemeEditor: View {
     /// Shows the theme in the windows as it is being adjusted, without saving anything (Cancel just closes).
     private func live() {
         Theme.apply(previewSettings)
+        model.previewLook = theme.look
         model.objectWillChange.send()
     }
 

@@ -90,7 +90,10 @@ final class AppModel: ObservableObject {
     var runningName: String { session?.isRunning == true ? "the job “\(session?.job.name ?? "")”" : "the restore" }
     var canRun: Bool { selectedJob != nil && !isRunning }
     /// a finished run or restore the user has not looked at yet
-    var hasLastRun: Bool { session != nil || restoreSession != nil }
+    var hasLastRun: Bool { (session != nil || restoreSession != nil) && !isRunning }
+    /// the look the theme editor is trying out, over the saved one
+    @Published var previewLook: Appearance?
+    var lookInForce: Appearance { previewLook ?? settings.effectiveAppearance }
     /// the ids of every job except `job` — the runner refuses a folder another of them uses
     func otherJobIds(_ job: Job) -> Set<UUID> { Set(jobs.map(\.id)).subtracting([job.id]) }
 
@@ -108,12 +111,15 @@ final class AppModel: ObservableObject {
 
     func update(_ job: Job) {
         guard let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
-        jobs[i] = job
+        // a rename keeps the backup families going (the title defaults to the job's name)
+        jobs[i] = jobs[i].name != job.name ? jobs[i].renamed(job.name).withSource(job.sourcePath) : job
         saveJobs()
     }
 
     /// Is this job being run right now?
-    func isRunning(_ job: Job) -> Bool { session?.isRunning == true && session?.job.id == job.id }
+    func isRunning(_ job: Job) -> Bool {
+        (session?.isRunning == true && session?.job.id == job.id) || (restoreSession?.isRunning == true && restoreSession?.job.id == job.id)
+    }
 
     func delete(_ job: Job) {
         guard !isRunning(job) else { notice = Notice(title: "This job is running", message: "Wait for it to finish, or cancel it, before deleting it."); return }
@@ -124,19 +130,25 @@ final class AppModel: ObservableObject {
         saveJobs()
     }
 
-    /// A copy of a job with new ids (destinations too, so records and secrets stay apart). Secrets of the
-    /// original's share/SSH destinations are copied over so the duplicate works at once.
+    /// A copy of a job with new ids (destinations too, so records and secrets stay apart). The copies start
+    /// turned off: they still point at the original's folders, which two jobs can't share — the user gives each
+    /// a folder of its own and turns it on. Share/SSH sign-ins are copied so the duplicate works once that is done.
     func duplicate(_ job: Job) {
         var copy = Job(name: job.name + " copy", sourcePath: job.sourcePath)
         for d in job.destinations {
             var nd = d
             nd.id = UUID()
-            if let secret = try? secrets.secret(for: SecretAccount.destination(d.id)) { try? secrets.set(secret, for: SecretAccount.destination(nd.id)) }
+            nd.enabled = false
+            if secrets.has(SecretAccount.destination(d.id)), let secret = try? secrets.secret(for: SecretAccount.destination(d.id)) { try? secrets.set(secret, for: SecretAccount.destination(nd.id)) }
             copy.destinations.append(nd)
         }
         if let i = jobs.firstIndex(where: { $0.id == job.id }) { jobs.insert(copy, at: i + 1) } else { jobs.append(copy) }
         selectedJobId = copy.id
         saveJobs()
+        if !copy.destinations.isEmpty {
+            notice = Notice(title: "“\(copy.name)” is a copy of “\(job.name)”",
+                            message: "Its destinations are turned off because they still point at \(job.name)'s folders, and two jobs can't share one folder. Edit each destination, give it a folder of its own, then turn it on.")
+        }
     }
 
     func upsert(_ destination: Destination, in job: Job) {
@@ -233,7 +245,6 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         let session = RunSession(job: job)
         self.session = session
-        restoreSession = nil
         screen = .run
         sheet = nil
         let runner = JobRunner()
@@ -286,7 +297,6 @@ final class AppModel: ObservableObject {
         guard !isRunning else { return }
         let session = RestoreSession(job: job, destination: destination, point: point, target: target)
         restoreSession = session
-        self.session = nil
         screen = .restore
         sheet = nil
         sleepActivity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated], reason: "Data Syncer is restoring files")
@@ -299,8 +309,19 @@ final class AppModel: ObservableObject {
                 session.finish(result)
                 self?.runTask = nil
                 if let a = self?.sleepActivity { ProcessInfo.processInfo.endActivity(a); self?.sleepActivity = nil }
+                self?.recordRestore(session, result)
             }
         }
+    }
+
+    /// A restore goes into the history like a run (as "Restore of <job>"), and is notified like one.
+    private func recordRestore(_ session: RestoreSession, _ result: RestoreResult) {
+        let d = DestinationResult(destinationId: session.destination.id, destinationName: "\(session.destination.name) → \(session.target.lastPathComponent)",
+                                  status: result.status, copied: result.restored, deleted: result.removed, unchanged: 0, skipped: result.skipped, bytes: 0,
+                                  startedAt: result.startedAt, finishedAt: result.finishedAt, backupFolder: session.point, problems: result.problems)
+        let report = RunReport(jobId: session.job.id, jobName: "Restore of \(session.job.name)", startedAt: result.startedAt, finishedAt: result.finishedAt, results: [d])
+        do { history = try historyStore.append(report) } catch { notice = Notice(title: "The run history could not be saved", message: error.localizedDescription) }
+        if settings.notifyWhenFinished { notify(report) }
     }
 
     func dismissRestore() {
@@ -311,9 +332,16 @@ final class AppModel: ObservableObject {
     /// Back to the jobs list; the run (if still going) carries on and shows in the strip.
     func showJobs() { screen = .jobs }
 
-    /// The run or restore screen (running, or finished and not yet dismissed).
+    /// The run or restore screen: the one that is running, else the one that finished most recently.
     func watchRun() {
-        if restoreSession != nil { screen = .restore } else if session != nil { screen = .run }
+        if restoreSession?.isRunning == true { screen = .restore; return }
+        if session?.isRunning == true { screen = .run; return }
+        switch (session?.report?.finishedAt, restoreSession?.result?.finishedAt) {
+        case (let a?, let b?): screen = a >= b ? .run : .restore
+        case (_?, nil): screen = .run
+        case (nil, _?): screen = .restore
+        default: break
+        }
     }
 
     /// Clears the finished run from the window.

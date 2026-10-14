@@ -10,6 +10,7 @@ struct AccountsPane: View {
     @State private var loadError: String?
     @State private var adding: CloudProvider?
     @State private var signingOut: CloudAccount?
+    @State private var problem: Notice?
 
     var body: some View {
         Form {
@@ -71,7 +72,7 @@ struct AccountsPane: View {
                         Button("Forget") { forget(item.account) }.font(.system(size: 12))
                     }
                 }
-                Text("The secrets themselves live in your Mac's Keychain (Keychain Access shows them under “Data Syncer”). Forgetting one means the destination asks for it again — or, for a share that Finder has already connected, keeps working.")
+                Text("The secrets themselves live in your Mac's Keychain (Keychain Access shows them under “Data Syncer”). Forgetting one means that destination fails at its next run until you enter the sign-in again in its Edit… sheet — except a share that Finder has already connected, which keeps working.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Section {
@@ -107,6 +108,7 @@ struct AccountsPane: View {
             if let p = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").dropFirst(2).first.flatMap({ CloudProvider(rawValue: String($0)) }) { adding = p }
         }
         .sheet(item: $adding) { p in CloudAccountSheet(provider: p) { _ in } }
+        .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
         .confirmationDialog("Sign out of \(signingOut?.provider.label ?? "") (\(signingOut?.label ?? ""))?", isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }), titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { if let a = signingOut { model.remove(a) }; signingOut = nil }
             Button("Cancel", role: .cancel) { signingOut = nil }
@@ -135,7 +137,7 @@ struct AccountsPane: View {
     }
 
     private func forget(_ account: String) {
-        do { try model.secrets.remove(for: account) } catch { model.notice = Notice(title: "Could not forget the sign-in", message: error.localizedDescription) }
+        do { try model.secrets.remove(for: account) } catch { problem = Notice(title: "Could not forget the sign-in", message: error.localizedDescription) }
         Task { await load() }
     }
 }

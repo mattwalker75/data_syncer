@@ -67,6 +67,12 @@ public struct DestinationResult: Codable, Equatable, Sendable {
     public var backupFolder: String?
     public var problems: [String] = []
     public var duration: TimeInterval { finishedAt.timeIntervalSince(startedAt) }
+    public init(destinationId: Destination.ID, destinationName: String, status: DestinationStatus, copied: Int = 0, deleted: Int = 0, unchanged: Int = 0,
+                skipped: Int = 0, bytes: Int64 = 0, startedAt: Date, finishedAt: Date, backupFolder: String? = nil, problems: [String] = []) {
+        self.destinationId = destinationId; self.destinationName = destinationName; self.status = status; self.copied = copied; self.deleted = deleted
+        self.unchanged = unchanged; self.skipped = skipped; self.bytes = bytes; self.startedAt = startedAt; self.finishedAt = finishedAt
+        self.backupFolder = backupFolder; self.problems = problems
+    }
 }
 
 public struct RunReport: Equatable, Sendable, Identifiable {
@@ -77,6 +83,9 @@ public struct RunReport: Equatable, Sendable, Identifiable {
     public var startedAt: Date
     public var finishedAt: Date
     public var results: [DestinationResult]
+    public init(id: UUID = UUID(), jobId: Job.ID, jobName: String, startedAt: Date, finishedAt: Date, results: [DestinationResult]) {
+        self.id = id; self.jobId = jobId; self.jobName = jobName; self.startedAt = startedAt; self.finishedAt = finishedAt; self.results = results
+    }
     public var allFine: Bool {
         results.allSatisfy { r in
             if case .skipped = r.status { return true }

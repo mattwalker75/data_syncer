@@ -13,7 +13,7 @@ struct CheckSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Checking “\(job.name)”").font(.title2).fontWeight(.bold)
+                Text(running ? "Checking “\(job.name)”" : "Checked “\(job.name)”").font(.title2).fontWeight(.bold)
                 Spacer()
                 if running { ProgressView().controlSize(.small) }
             }

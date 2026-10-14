@@ -58,7 +58,7 @@ struct MainWindow: View {
         } detail: {
             VStack(spacing: 0) {
                 if let session = model.session { RunningStrip(session: session) }
-                else if let restore = model.restoreSession { RestoringStrip(session: restore) }
+                if let restore = model.restoreSession { RestoringStrip(session: restore) }
                 if let job = model.selectedJob {
                     JobDetailView(job: job)
                 } else {
@@ -198,7 +198,8 @@ struct RunningStrip: View {
                     }
                 }
                 Spacer()
-                Button(model.preview != nil ? "Answer" : "Watch") { model.watchRun() }.buttonStyle(.borderedProminent).controlSize(.regular)
+                // a preview waiting behind another sheet (Check, an editor) appears once that sheet closes
+                Button(model.preview != nil ? "Answer" : "Watch") { if model.preview != nil { model.sheet = nil } else { model.watchRun() } }.buttonStyle(.borderedProminent).controlSize(.regular)
                 Button(session.cancelRequested ? "Cancelling…" : "Cancel run") { model.cancelRun() }.disabled(session.cancelRequested)
             } else if let r = session.report {
                 let o = Formatting.outcome(r)
@@ -310,7 +311,7 @@ struct RunDetailsSheet: View {
                             if d.unchanged > 0 || d.skipped > 0 {
                                 Text("\(Formatting.count(d.unchanged)) unchanged · \(Formatting.count(d.skipped)) skipped · \(Formatting.bytes(d.bytes)) · \(Formatting.duration(d.duration))").font(.system(size: 12)).foregroundStyle(.secondary)
                             }
-                            ForEach(d.problems, id: \.self) { Text($0).font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                            ForEach(Array(d.problems.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
                         }
                     }
                 }

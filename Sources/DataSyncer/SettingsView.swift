@@ -6,6 +6,8 @@ import DataSyncerCore
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
     @State private var confirmClear = false
+    @State private var selectedRun: RunReport.ID?
+    @State private var showingRun: RunReport?
 
     var body: some View {
         TabView(selection: $model.settingsTab) {
@@ -66,13 +68,19 @@ struct SettingsView: View {
                 Text("No runs yet.").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("Double-click a run to see what happened.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                Table(model.history) {
-                    TableColumn("When") { r in Text(Formatting.When(r.startedAt)).onTapGesture(count: 2) { model.sheet = .runDetails(r) } }.width(120)
+                Table(model.history, selection: $selectedRun) {
+                    TableColumn("When") { r in Text(Formatting.When(r.startedAt)) }.width(120)
                     TableColumn("Job", value: \.jobName)
                     TableColumn("Destinations") { r in Text(r.results.map(\.destinationName).joined(separator: " · ")) }
                     TableColumn("Outcome") { r in let o = Formatting.outcome(r); Text(o.text).foregroundStyle(o.color) }.width(100)
                     TableColumn("Took") { Text(Formatting.duration($0.finishedAt.timeIntervalSince($0.startedAt))) }.width(70)
                 }
+                .contextMenu(forSelectionType: RunReport.ID.self) { ids in
+                    Button("Show what happened") { if let id = ids.first { showingRun = model.history.first { $0.id == id } } }
+                } primaryAction: { ids in
+                    if let id = ids.first { showingRun = model.history.first { $0.id == id } }
+                }
+                .sheet(item: $showingRun) { RunDetailsSheet(report: $0) }
             }
             HStack {
                 Text("\(model.history.count) run\(model.history.count == 1 ? "" : "s") kept (the newest 500).").font(.system(size: 12)).foregroundStyle(.secondary)

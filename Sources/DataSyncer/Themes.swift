@@ -4,14 +4,19 @@
 import SwiftUI
 
 /// A colour that can be saved (sRGB 0…1).
-struct ThemeColor: Codable, Equatable, Hashable {
+struct ThemeColor: Codable, Hashable {
     var r: Double, g: Double, b: Double
     var color: Color { Color(.sRGB, red: r, green: g, blue: b) }
     init(_ r: Double, _ g: Double, _ b: Double) { self.r = r; self.g = g; self.b = b }
+    /// Rounded to 8-bit steps: NSColor keeps Float components, so a round trip through the picker would
+    /// otherwise turn every preset into "a colour of your own" by a billionth
     init(_ color: Color) {
         let ns = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(srgbRed: 0, green: 0.4, blue: 0.85, alpha: 1)
-        r = Double(ns.redComponent); g = Double(ns.greenComponent); b = Double(ns.blueComponent)
+        func q(_ v: CGFloat) -> Double { (Double(v) * 255).rounded() / 255 }
+        r = q(ns.redComponent); g = q(ns.greenComponent); b = q(ns.blueComponent)
     }
+    static func == (a: ThemeColor, b: ThemeColor) -> Bool { abs(a.r - b.r) < 1 / 512 && abs(a.g - b.g) < 1 / 512 && abs(a.b - b.b) < 1 / 512 }
+    func hash(into h: inout Hasher) { h.combine(Int(r * 255)); h.combine(Int(g * 255)); h.combine(Int(b * 255)) }
     static let blue = ThemeColor(0.04, 0.37, 0.84)
 }
 

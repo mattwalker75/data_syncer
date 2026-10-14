@@ -127,21 +127,24 @@ struct JobDetailView: View {
                 Text("This job hasn't run yet.").foregroundStyle(.secondary).font(.system(size: 12.5))
             } else {
                 Text("Click a run to see what happened.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 0) {
+                // one button per run (a GridRow's modifiers would land on each cell, leaving dead gaps)
+                VStack(spacing: 0) {
                     ForEach(Array(runs.enumerated()), id: \.element.id) { i, run in
                         let o = Formatting.outcome(run)
-                        GridRow {
-                            Text(Formatting.When(run.startedAt)).gridColumnAlignment(.leading)
-                            Text(run.results.filter { if case .skipped = $0.status { return false }; return true }.map(\.destinationName).joined(separator: " · ")).foregroundStyle(.secondary).lineLimit(1)
-                            Text(o.text).foregroundStyle(o.color).fontWeight(.semibold)
-                            Text(Formatting.duration(run.finishedAt.timeIntervalSince(run.startedAt))).foregroundStyle(.secondary)
+                        Button { model.sheet = .runDetails(run) } label: {
+                            HStack(spacing: 14) {
+                                Text(Formatting.When(run.startedAt)).frame(width: 150, alignment: .leading)
+                                Text(run.results.filter { if case .skipped = $0.status { return false }; return true }.map(\.destinationName).joined(separator: " · ")).foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(o.text).foregroundStyle(o.color).fontWeight(.semibold).frame(width: 110, alignment: .leading)
+                                Text(Formatting.duration(run.finishedAt.timeIntervalSince(run.startedAt))).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
+                            }
+                            .font(.system(size: 12.5))
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                         }
-                        .font(.system(size: 12.5))
-                        .padding(.vertical, 7)
-                        .contentShape(Rectangle())
-                        .onTapGesture { model.sheet = .runDetails(run) }
+                        .buttonStyle(.plain)
                         .help(Formatting.summary(of: run))
-                        .accessibilityAddTraits(.isButton)
+                        .accessibilityLabel("\(Formatting.When(run.startedAt)), \(o.text)")
                         if i < runs.count - 1 { Divider() }
                     }
                 }
@@ -159,7 +162,7 @@ struct DestinationRow: View {
     var body: some View {
         let d = destination
         let badge = Theme.badge(d.mode)
-        let status = d.enabled ? Formatting.lastRun(last, mode: d.mode) : ("Paused" + (last.map { " · last run \(Formatting.when($0.finishedAt))" } ?? ""), Color.secondary)
+        let status = d.enabled ? Formatting.lastRun(last, mode: d.mode) : ("Off" + (last.map { " · last run \(Formatting.when($0.finishedAt))" } ?? ""), Color.secondary)
         Card {
             HStack(spacing: 14) {
                 Image(systemName: Formatting.icon(d.kind)).font(.system(size: 20)).frame(width: 28)
