@@ -21,8 +21,8 @@ on its own: open the app, pick a job, press **Run…**.
   off, move it up or down, show its folder in Finder, remove it. The switch on the right turns a
   destination off without removing it — a paused destination is skipped until you turn it on again.
   Click a recent run to see everything that happened (and copy the report).
-- The toolbar: **Check destinations** (is everything reachable and writable? — copies nothing),
-  **Restore…**, **Run…**.
+- At the top of the page: **Check destinations** (is everything reachable and writable? — copies
+  nothing), **Restore…**, **Run…**.
 
 ## Making a job
 
@@ -67,6 +67,15 @@ on its own: open the app, pick a job, press **Run…**.
   uses is refused — two jobs mirroring one folder would erase each other's files. A folder left behind
   by a job that no longer exists is simply taken over.
 
+- **What goes into the folder** — *what is inside the source folder* (the destination folder holds
+  the source's files and folders directly; this is how Data Syncer always worked) or *the source
+  folder itself* (the destination gets a folder with the source's name, and everything inside that:
+  `Backups/Work documents/…`, and each dated backup holds `Work documents/…`). Pick the second when
+  one destination folder is shared by several jobs' backups, or when you want the copy to look
+  exactly like the original in Finder. A restore gives the folder back under its own name. Changing
+  this on a destination that already has copies makes the old layout look like extra files: a sync
+  will offer to delete them (the preview shows it), and a backup chain starts over with a full.
+
   Links (aliases made with `ln -s`) can't be kept in cloud services; the run reports each one as
   skipped and carries on. Dates: Google Drive, Dropbox and OneDrive keep each file's modified date;
   S3 can't, so Data Syncer remembers what it wrote and compares against that.
@@ -80,6 +89,10 @@ on its own: open the app, pick a job, press **Run…**.
   folder.
 - **Backup title** — the name used in the dated folders (`2026_10_20_1432_Full_<title>`); the job's
   name if left empty.
+
+A new destination is on. The switch on the job's page turns it off (skipped until you turn it on
+again) — the editor doesn't have one. **Remove destination…** at the bottom of the editor takes it
+off the job (nothing at the destination is touched); so does right-click → Remove… on the job's page.
 
 ## Running
 
@@ -151,11 +164,12 @@ deleting. It never deletes a backup on its own.
   only if a run still says the folder can't be read is Full Disk Access needed. (With the standard
   build, Full Disk Access has to be granted again after each rebuild — see SCRIPTS.md for a way to
   avoid that.)
-- **Appearance** — Light, Dark, or follow the system; the accent colour (nine to pick from, or any
-  colour of your own); and **your own themes**: **New theme…** opens an editor for the look, the
-  accent, the good / attention / problem colours and optional tints for the sidebar and cards — the
-  windows follow along while you adjust (the look too), nothing is saved until **Save and use**, and
-  the list lets you switch between your themes and the plain system colours; deleting a theme asks first.
+- **Appearance** — one **Theme** list: **Light**, **Dark**, **Follow the system**, then your own
+  themes; click a line to use it. **New…** at the bottom opens the theme editor (the look, the accent,
+  the good / attention / problem colours and optional tints for the sidebar and cards — the windows
+  follow along while you adjust, nothing is saved until **Save and use**); each of your themes has
+  **Edit…** and a trash icon (deleting asks first). Below, the **accent colour** (nine to pick from,
+  or any colour of your own) applies to Light, Dark and Follow the system; a theme brings its own.
 - **Accounts** — what this Mac has for SSH (the keys in `~/.ssh`, what ssh-agent has loaded, the
   hosts in `~/.ssh/config`, how many servers `known_hosts` remembers — read only, with a button to
   open the folder); the share and SSH sign-ins Data Syncer keeps in your Keychain, each with

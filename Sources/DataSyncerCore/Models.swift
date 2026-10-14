@@ -128,12 +128,18 @@ public struct Destination: Codable, Equatable, Identifiable, Sendable {
     public var backupTitle: String
     /// (SSH) the user chose a password rather than keys — stored here, never inferred from the Keychain
     public var usesPassword: Bool?
+    /// true = the source folder itself goes into the destination (`<folder>/<source name>/…`); nil or false =
+    /// only what is inside it (`<folder>/…`), the way the app always worked
+    public var includeSourceFolder: Bool?
 
     public init(id: UUID = UUID(), name: String, kind: DestinationKind, folder: String, mode: DestinationMode,
-                enabled: Bool = true, backupTitle: String = "", usesPassword: Bool? = nil) {
+                enabled: Bool = true, backupTitle: String = "", usesPassword: Bool? = nil, includeSourceFolder: Bool? = nil) {
         self.id = id; self.name = name; self.kind = kind; self.folder = folder; self.mode = mode
-        self.enabled = enabled; self.backupTitle = backupTitle; self.usesPassword = usesPassword
+        self.enabled = enabled; self.backupTitle = backupTitle; self.usesPassword = usesPassword; self.includeSourceFolder = includeSourceFolder
     }
+
+    /// Does this destination get the source folder itself, rather than just its contents?
+    public var copiesSourceFolder: Bool { includeSourceFolder == true }
 }
 
 // MARK: - Jobs

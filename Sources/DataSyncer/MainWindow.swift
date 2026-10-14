@@ -1,5 +1,5 @@
-// The main window (Theme 1 "Sidebar"): jobs down the left, the selected job on the right, Run / Check / Restore
-// in the toolbar, New job and the Settings gear at the bottom of the sidebar. While a job runs, a strip under
+// The main window (Theme 1 "Sidebar"): jobs down the left, the selected job on the right with Check / Restore /
+// Run at the top of its page, New job and the Settings gear at the bottom of the sidebar. While a job runs, a strip under
 // the toolbar shows where it is, with Watch and Cancel run; the run screen takes the whole window. When it
 // finishes the strip stays until the summary has been seen or dismissed.
 import SwiftUI
@@ -67,23 +67,27 @@ struct MainWindow: View {
             }
             .navigationTitle("Data Syncer")
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button { model.checkDestinations() } label: { Label("Check destinations", systemImage: "checkmark") }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(model.selectedJob == nil)
-                    .help("See that every destination is reachable and writable, without copying anything")
-                Button { model.askToRestore() } label: { Label("Restore…", systemImage: "arrow.counterclockwise") }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(model.selectedJob == nil || model.isRunning)
-                    .help(model.isRunning ? "Restore… is unavailable until \(model.runningName) finishes" : "Put a full or incremental backup back into a folder you choose")
-                Button { model.askToRun() } label: { Label("Run…", systemImage: "play.fill") }
-                    .labelStyle(.titleAndIcon)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!model.canRun)
-                    .help(model.isRunning ? "Run… is unavailable until \(model.runningName) finishes" : "Run this job")
-            }
+    }
+}
+
+/// Check destinations · Restore… · Run… — real buttons on the job's page (in the toolbar macOS draws them grey).
+struct JobActions: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { model.checkDestinations() } label: { Label("Check destinations", systemImage: "checkmark.circle") }
+                .help("See that every destination is reachable and writable, without copying anything")
+            Button { model.askToRestore() } label: { Label("Restore…", systemImage: "arrow.counterclockwise") }
+                .disabled(model.isRunning)
+                .help(model.isRunning ? "Restore… is unavailable until \(model.runningName) finishes" : "Put a full or incremental backup back into a folder you choose")
+            Button { model.askToRun() } label: { Label("Run…", systemImage: "play.fill") }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.canRun)
+                .help(model.isRunning ? "Run… is unavailable until \(model.runningName) finishes" : "Run this job")
         }
+        .controlSize(.large)
+        .labelStyle(.titleAndIcon)
     }
 }
 
@@ -150,9 +154,9 @@ struct SidebarRow: View {
                     if !running, let last, Formatting.outcome(last).needsAttention { Dot(color: Theme.attention, size: 7) }
                 }
                 if running, let s = model.session {
-                    Text(runningText(s)).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.accent)
+                    Text(runningText(s)).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent)
                 } else {
-                    Text(subtitle(last)).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                    Text(subtitle(last)).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             if running { Spacer(); ProgressView().controlSize(.small) }
@@ -194,7 +198,7 @@ struct RunningStrip: View {
                     Text(headline).fontWeight(.semibold).foregroundStyle(Theme.accent)
                     HStack(spacing: 10) {
                         ProgressView(value: session.current?.progress.fraction ?? 0).frame(width: 260)
-                        Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text(detail).font(.system(size: 13.5)).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -249,7 +253,7 @@ struct RestoringStrip: View {
                     HStack(spacing: 10) {
                         ProgressView(value: session.progress.fraction).frame(width: 260)
                         Text(session.progress.filesTotal > 0 ? "\(Formatting.count(session.progress.filesDone)) of \(Formatting.count(session.progress.filesTotal)) files" : "checking…")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -307,11 +311,11 @@ struct RunDetailsSheet: View {
                     ForEach(report.results, id: \.destinationId) { d in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(Formatting.line(for: d)).fontWeight(.medium)
-                            if let f = d.backupFolder { Text(f).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary) }
+                            if let f = d.backupFolder { Text(f).font(.system(size: 13.5, design: .monospaced)).foregroundStyle(.secondary) }
                             if d.unchanged > 0 || d.skipped > 0 {
-                                Text("\(Formatting.count(d.unchanged)) unchanged · \(Formatting.count(d.skipped)) skipped · \(Formatting.bytes(d.bytes)) · \(Formatting.duration(d.duration))").font(.system(size: 12)).foregroundStyle(.secondary)
+                                Text("\(Formatting.count(d.unchanged)) unchanged · \(Formatting.count(d.skipped)) skipped · \(Formatting.bytes(d.bytes)) · \(Formatting.duration(d.duration))").font(.system(size: 13.5)).foregroundStyle(.secondary)
                             }
-                            ForEach(Array(d.problems.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                            ForEach(Array(d.problems.enumerated()), id: \.offset) { Text($0.element).font(.system(size: 13.5)).foregroundStyle(Theme.attention).textSelection(.enabled) }
                         }
                     }
                 }

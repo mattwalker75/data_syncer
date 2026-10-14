@@ -382,3 +382,72 @@ final class BackupDeletionTests: XCTestCase {
         XCTAssertEqual(readTree(target), ["a.txt": "A"])
     }
 }
+
+// MARK: - copying the source folder itself, not just what is inside it
+
+final class SourceFolderTests: XCTestCase {
+    func testASyncCanCopyTheSourceFolderItself() async throws {
+        let s = Scratch()
+        let src = s.dir("Work documents"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A", "docs/b.md": "B"])
+        var job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        job.destinations[0].includeSourceFolder = true
+        let report = await JobRunner().run(job) { _ in }
+        XCTAssertEqual(report.first.status, .finished, "\(report.first.problems)")
+        XCTAssertEqual(readTree(dst), ["Work documents": "<dir>", "Work documents/a.txt": "A", "Work documents/docs": "<dir>", "Work documents/docs/b.md": "B"])
+        // the record names the paths the way they are at the destination
+        let state = try await Records.loadSyncState(from: LocalStorage(root: dst))
+        XCTAssertEqual(Set(state?.files.keys.map { $0 } ?? []), ["Work documents/a.txt", "Work documents/docs/b.md"])
+        // nothing to do the second time
+        let again = await JobRunner().run(job) { _ in }
+        XCTAssertEqual(again.first.copied, 0)
+        XCTAssertEqual(again.first.unchanged, 2)
+        // a change is seen through the folder name, and a deletion too
+        makeTree(src, ["a.txt": "A2"])
+        try FileManager.default.removeItem(at: src.appendingPathComponent("docs"))
+        let third = await JobRunner().run(job) { _ in }
+        XCTAssertEqual(third.first.copied, 1)
+        XCTAssertEqual(third.first.deleted, 2)
+        XCTAssertEqual(readTree(dst), ["Work documents": "<dir>", "Work documents/a.txt": "A2"])
+    }
+
+    func testABackupCanHoldTheSourceFolderItselfAndRestoresIt() async throws {
+        let s = Scratch()
+        let src = s.dir("Photos"), dst = s.dir("dst"), into = s.dir("into")
+        makeTree(src, ["one.jpg": "1", "2024/two.jpg": "2"])
+        var job = localJob(source: src, dest: dst, mode: .fullIncremental(chainStart: .lastIncremental, maxIncrementals: 5))
+        job.destinations[0].includeSourceFolder = true
+        let clock = FixedClock()
+        let full = await runner(clock).run(job, choices: [job.destinations[0].id: .full]) { _ in }
+        XCTAssertEqual(full.first.status, .finished, "\(full.first.problems)")
+        let folder = try XCTUnwrap(full.first.backupFolder)
+        XCTAssertEqual(readTree(dst.appendingPathComponent(folder)), ["Photos": "<dir>", "Photos/one.jpg": "1", "Photos/2024": "<dir>", "Photos/2024/two.jpg": "2"])
+        // an incremental sees only the change
+        clock.tick(minutes: 2)
+        makeTree(src, ["three.jpg": "3"])
+        let inc = await runner(clock).run(job, choices: [job.destinations[0].id: .incremental]) { _ in }
+        XCTAssertEqual(inc.first.status, .finished, "\(inc.first.problems)")
+        XCTAssertEqual(inc.first.copied, 1)
+        XCTAssertEqual(readTree(dst.appendingPathComponent(try XCTUnwrap(inc.first.backupFolder))), ["Photos": "<dir>", "Photos/three.jpg": "3"])
+        // a restore gives the folder back, under its own name
+        let storage = LocalStorage(root: dst)
+        let catalog = try await BackupCatalog.load(from: storage, title: job.backupTitle(for: job.destinations[0]))
+        let r = await RestoreEngine.restore(from: storage, catalog: catalog, point: try XCTUnwrap(inc.first.backupFolder), to: into, removeDeleted: true) { _ in }
+        XCTAssertEqual(r.status, .finished, "\(r.problems)")
+        XCTAssertEqual(readTree(into), ["Photos": "<dir>", "Photos/one.jpg": "1", "Photos/2024": "<dir>", "Photos/2024/two.jpg": "2", "Photos/three.jpg": "3"])
+    }
+
+    func testTheDefaultStillCopiesOnlyTheContents() async throws {
+        let s = Scratch()
+        let src = s.dir("Work"), dst = s.dir("dst")
+        makeTree(src, ["a.txt": "A"])
+        let job = localJob(source: src, dest: dst, mode: .sync(deleteExtras: true))
+        XCTAssertFalse(job.destinations[0].copiesSourceFolder)
+        _ = await JobRunner().run(job) { _ in }
+        XCTAssertEqual(readTree(dst), ["a.txt": "A"])
+        // an old jobs.json without the field reads as "contents only"
+        let data = try JSONEncoder().encode(job)
+        let back = try JSONDecoder().decode(Job.self, from: data)
+        XCTAssertNil(back.destinations[0].includeSourceFolder)
+    }
+}

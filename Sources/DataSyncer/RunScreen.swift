@@ -18,7 +18,7 @@ struct RunOptionsSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Run “\(job.name)”").font(.title2).fontWeight(.bold)
             Text("Destinations run one after another, in this order. A destination that fails doesn't stop the next one.")
-                .foregroundStyle(.secondary).font(.system(size: 12.5))
+                .foregroundStyle(.secondary).font(.system(size: 14))
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(job.destinations.enumerated()), id: \.element.id) { i, d in
                     Card {
@@ -26,9 +26,9 @@ struct RunOptionsSheet: View {
                             Image(systemName: Formatting.icon(d.kind)).frame(width: 20)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("\(i + 1) · \(d.name)").fontWeight(.semibold)
-                                Text(d.enabled ? what(d) : "off — skipped").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                                Text(d.enabled ? what(d) : "off — skipped").font(.system(size: 13.5)).foregroundStyle(.secondary).lineLimit(2)
                                 if let n = chainNotes[d.id] {
-                                    HStack(alignment: .firstTextBaseline, spacing: 5) { Dot(color: n.ok ? Theme.good : Theme.attention, size: 6); Text(n.text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(3) }
+                                    HStack(alignment: .firstTextBaseline, spacing: 5) { Dot(color: n.ok ? Theme.good : Theme.attention, size: 6); Text(n.text).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(3) }
                                 }
                             }
                             Spacer()
@@ -42,7 +42,7 @@ struct RunOptionsSheet: View {
                 }
             }
             Text("“Let Data Syncer choose” makes an incremental when the chain allows one, otherwise a full backup. Sync destinations show a preview before anything is copied or deleted.")
-                .foregroundStyle(.secondary).font(.system(size: 12))
+                .foregroundStyle(.secondary).font(.system(size: 13.5))
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -102,7 +102,7 @@ struct RunScreen: View {
 
     private var titleBar: some View {
         HStack {
-            Text("Run · \(session.job.name)").font(.system(size: 14, weight: .semibold))
+            Text("Run · \(session.job.name)").font(.system(size: 15, weight: .semibold))
             Spacer()
             HStack(spacing: 8) {
                 if session.isRunning {
@@ -125,14 +125,14 @@ struct RunScreen: View {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionLabel("Checks")
                     let checks = session.destinations.flatMap { d in d.checks.map { (d.destination.name, $0) } }
-                    if checks.isEmpty { Text("Starting…").font(.system(size: 12.5)).foregroundStyle(.secondary) }
+                    if checks.isEmpty { Text("Starting…").font(.system(size: 14)).foregroundStyle(.secondary) }
                     ForEach(Array(checks.enumerated()), id: \.offset) { _, c in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: c.1.ok ? "checkmark" : "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(c.1.ok ? Theme.good : Theme.problem).frame(width: 14)
-                            Text("\(c.1.name == "Source" ? "" : c.0 + " · ")\(c.1.name): \(c.1.detail)").font(.system(size: 12)).lineLimit(4)
+                            Image(systemName: c.1.ok ? "checkmark" : "xmark").font(.system(size: 12.5, weight: .bold)).foregroundStyle(c.1.ok ? Theme.good : Theme.problem).frame(width: 14)
+                            Text("\(c.1.name == "Source" ? "" : c.0 + " · ")\(c.1.name): \(c.1.detail)").font(.system(size: 13.5)).lineLimit(4)
                         }
                         if !c.1.ok, c.1.detail.contains("Full Disk Access") {
-                            Button("Give Data Syncer Full Disk Access…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
+                            Button("Give Data Syncer Full Disk Access…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 13.5))
                                 .help("Opens System Settings → Privacy & Security → Full Disk Access; add Data Syncer there, then run again")
                         }
                     }
@@ -145,7 +145,7 @@ struct RunScreen: View {
                 }
                 Spacer(minLength: 0)
                 Text(session.isRunning ? "Your Mac won't sleep while this runs. You'll get a notification and a summary when it finishes." : "")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 13.5)).foregroundStyle(.secondary)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -168,11 +168,11 @@ struct RunScreen: View {
                 Spacer()
                 Badge(text: d.statusLabel, fill: color.opacity(0.14), color: color)
             }
-            Text(d.plan.isEmpty ? Formatting.modeNote(d.destination.mode) : d.plan).font(.system(size: 12)).foregroundStyle(.secondary)
-            if let f = d.result?.backupFolder { Text(f).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary) }
+            Text(d.plan.isEmpty ? Formatting.modeNote(d.destination.mode) : d.plan).font(.system(size: 13.5)).foregroundStyle(.secondary)
+            if let f = d.result?.backupFolder { Text(f).font(.system(size: 13.5, design: .monospaced)).foregroundStyle(.secondary) }
             if case .done(let s) = d.phase {
                 switch s {
-                case .failed(let why), .skipped(let why): Text(why).font(.system(size: 12)).foregroundStyle(color)
+                case .failed(let why), .skipped(let why): Text(why).font(.system(size: 13.5)).foregroundStyle(color)
                 default: EmptyView()
                 }
             }
@@ -197,7 +197,7 @@ struct RunScreen: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ProgressView(value: session.isRunning ? d.progress.fraction : 1)
                     HStack {
-                        Text(progressText(d)).font(.system(size: 12.5))
+                        Text(progressText(d)).font(.system(size: 14))
                         Spacer()
                     }
                 }
@@ -236,13 +236,13 @@ struct RunScreen: View {
                             Text(line.path).lineLimit(1).truncationMode(.middle)
                             Text(line.text).foregroundStyle(lineColor(line.action))
                         }
-                        .font(.system(size: 12, design: .monospaced)).id(line.id)
+                        .font(.system(size: 13.5, design: .monospaced)).id(line.id)
                     }
                     if session.isRunning, let c = session.current, !c.progress.currentPath.isEmpty {
                         HStack(spacing: 6) {
                             Text(c.progress.currentPath).lineLimit(1).truncationMode(.middle)
                             Text("copying…")
-                        }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.accent).id(-1)
+                        }.font(.system(size: 13.5, design: .monospaced)).foregroundStyle(Theme.accent).id(-1)
                     }
                 }
                 .padding(12)
@@ -262,9 +262,9 @@ struct RunScreen: View {
             HStack(spacing: 8) { Dot(color: o.color); Text(o.text).fontWeight(.semibold).foregroundStyle(o.color) }
             ForEach(r.results, id: \.destinationId) { d in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Formatting.line(for: d)).font(.system(size: 12.5))
-                    ForEach(Array(d.problems.prefix(10).enumerated()), id: \.offset) { Text("   \($0.element)").font(.system(size: 12)).foregroundStyle(Theme.attention).textSelection(.enabled) }
-                    if d.problems.count > 10 { Text("   …and \(d.problems.count - 10) more").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    Text(Formatting.line(for: d)).font(.system(size: 14))
+                    ForEach(Array(d.problems.prefix(10).enumerated()), id: \.offset) { Text("   \($0.element)").font(.system(size: 13.5)).foregroundStyle(Theme.attention).textSelection(.enabled) }
+                    if d.problems.count > 10 { Text("   …and \(d.problems.count - 10) more").font(.system(size: 13.5)).foregroundStyle(.secondary) }
                 }
             }
         }
@@ -272,7 +272,7 @@ struct RunScreen: View {
 
     private func tile(_ label: String, _ n: Int) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(label).font(.system(size: 12.5)).foregroundStyle(.secondary)
             Text(Formatting.count(n)).font(.system(size: 20, weight: .bold)).monospacedDigit()
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -346,7 +346,7 @@ struct SyncPreviewSheet: View {
             }
             if !plan.delete.isEmpty {
                 Text("Deleting is on for this destination: files the source no longer has are removed from the copy. Turn it off in the destination's settings to keep them.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 13.5)).foregroundStyle(.secondary)
             }
             HStack {
                 Spacer()
@@ -367,12 +367,12 @@ struct SyncPreviewSheet: View {
 
     private func column(_ title: String, _ paths: [String], _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) { Dot(color: color); Text(title).font(.system(size: 12, weight: .semibold)) }
+            HStack(spacing: 6) { Dot(color: color); Text(title).font(.system(size: 13.5, weight: .semibold)) }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(paths.prefix(2000), id: \.self) { Text($0).font(.system(size: 12, design: .monospaced)).lineLimit(1).truncationMode(.middle) }
-                    if paths.count > 2000 { Text("…and \(Formatting.count(paths.count - 2000)) more").foregroundStyle(.secondary).font(.system(size: 12)) }
-                    if paths.isEmpty { Text("nothing").foregroundStyle(.secondary).font(.system(size: 12)) }
+                    ForEach(paths.prefix(2000), id: \.self) { Text($0).font(.system(size: 13.5, design: .monospaced)).lineLimit(1).truncationMode(.middle) }
+                    if paths.count > 2000 { Text("…and \(Formatting.count(paths.count - 2000)) more").foregroundStyle(.secondary).font(.system(size: 13.5)) }
+                    if paths.isEmpty { Text("nothing").foregroundStyle(.secondary).font(.system(size: 13.5)) }
                 }
                 .padding(8).frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -12,6 +12,18 @@ public enum Scanner {
         public var problems: [(RelPath, String)]
         /// the problem paths alone: nothing at or under one of these may be treated as "gone from the source"
         public var unreadable: Set<RelPath> { Set(problems.map(\.0)) }
+
+        /// The same scan seen one level up: everything under a folder called `name` (with `meta` as that folder's
+        /// own dates and permissions). For a destination that copies the source folder itself, not just what
+        /// is inside it — the copy is then made from the source's parent, so every path still resolves.
+        public func nested(under name: String, meta: FileMeta) -> Result {
+            var out = Result(snapshot: [:], fileCount: fileCount, totalBytes: totalBytes, problems: [])
+            out.snapshot.reserveCapacity(snapshot.count + 1)
+            out.snapshot[name] = FileMeta(isDirectory: true, modified: meta.modified, permissions: meta.permissions)
+            for (path, m) in snapshot { out.snapshot[name + "/" + path] = m }
+            out.problems = problems.map { (joinPath(name, $0.0), $0.1) }
+            return out
+        }
     }
 
     /// Scan a local folder. Throws when the folder itself cannot be read.

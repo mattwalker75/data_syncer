@@ -2,6 +2,36 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
+## [0.9.3] — 2026-10-14 — Matt's first look: eight UI changes
+
+### Added
+- **What goes into the folder**, per destination: *what is inside the source folder* (as before) or
+  *the source folder itself* — the destination gets a folder named after the source with everything
+  in it; backups and restores carry the name too (`Destination.includeSourceFolder`, `Scanner.Result.nested`;
+  three tests).
+- **Remove destination…** at the bottom of the destination editor (asks first; nothing at the
+  destination is touched).
+- Dev hook `DATASYNCER_AUTOSHEET=editDestination[:n]`.
+
+### Changed
+- **Appearance** is one **Theme** list: Light, Dark, Follow the system, then your own themes (click
+  a line to use it; Edit… and a trash icon on each of yours), with **New…** at the bottom. The accent
+  colour section stays below.
+- **Check destinations / Restore… / Run…** are real buttons at the top of the job's page instead of
+  toolbar items, which macOS draws greyed out in both looks.
+- Text is larger throughout: the base size is 14 (was 13) and the small notes went from 11–12.5 to
+  12.5–14.
+- The destination editor has no "On — runs with the job" switch any more: a new destination starts
+  on, and the switch on the job's page is where it is turned off.
+- "Most incrementals per chain": the number sits right-justified beside the arrows, in line with
+  the other fields.
+
+### Fixed
+- Typing a space in a name, a backup title or a path didn't show until the next character: inside
+  the app's window SwiftUI's text field dropped the trailing space from view (reproduced with a
+  probe that sends key events into the sheet). The editors now use `PlainTextField`, an
+  NSTextField the app owns, which keeps its text while you type.
+
 ## [0.9.2] — 2026-10-13 — the second review: 47 verified fixes
 
 Every item below was reproduced by a verifier (a throwaway test, probe or screenshot) before it was fixed.

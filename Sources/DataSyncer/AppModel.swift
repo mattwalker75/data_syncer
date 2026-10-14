@@ -405,7 +405,7 @@ final class AppModel: ObservableObject {
             selectedJobId = job.id
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.start(job, choices: [:]) }
         }
-        // DATASYNCER_AUTOSHEET=newJob|newDestination|check|run|settings[:tab[:provider]] opens that for the first job
+        // DATASYNCER_AUTOSHEET=newJob|newDestination|editDestination[:n]|check|run|settings[:tab[:provider]] opens that for the first job
         if let what = env["DATASYNCER_AUTOSHEET"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                 guard let self else { return }
@@ -415,7 +415,11 @@ final class AppModel: ObservableObject {
                 case "newDestination": if let job { self.sheet = .newDestination(job) }
                 case "check": if let job { self.sheet = .check(job) }
                 case "run": if let job { self.sheet = .runOptions(job) }
-                default: break
+                default:
+                    // editDestination:<n> opens the first job's n-th destination (0-based)
+                    if what.hasPrefix("editDestination"), let job, let i = Int(what.split(separator: ":").dropFirst().first ?? "0"), job.destinations.indices.contains(i) {
+                        self.sheet = .editDestination(job, job.destinations[i])
+                    }
                 }
             }
         }

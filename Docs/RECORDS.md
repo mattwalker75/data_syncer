@@ -73,3 +73,11 @@ then each incremental up to and including the point, into the folder you choose.
 that were deleted** decides what happens to a file an incremental recorded as deleted: with it on,
 the file is gone at the end (as it was in the source then); with it off, the file is left for you
 to sort out. Restores are whole backups; restoring one file or folder may come later.
+
+## When a destination copies the source folder itself
+
+With *What goes into the folder → the source folder itself* (`includeSourceFolder: true` in
+jobs.json), every path at the destination, in `sync-state.json` and in each manifest's snapshot is
+prefixed with the source folder's name (`Work documents/notes.md`), and the folder itself is recorded
+as a directory entry. Nothing else about the records changes: the manifest's snapshot is still the
+whole source as of that backup, and a restore recreates `Work documents/…` inside the folder you pick.

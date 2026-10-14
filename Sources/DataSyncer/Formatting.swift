@@ -171,7 +171,7 @@ struct SectionLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased()).font(.system(size: 11, weight: .semibold)).kerning(0.6).foregroundStyle(.secondary)
+        Text(text.uppercased()).font(.system(size: 12.5, weight: .semibold)).kerning(0.6).foregroundStyle(.secondary)
     }
 }
 
@@ -186,7 +186,7 @@ struct Badge: View {
     let fill: Color
     let color: Color
     var body: some View {
-        Text(text).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(color)
+        Text(text).font(.system(size: 13, weight: .semibold)).foregroundStyle(color)
             .padding(.horizontal, 8).padding(.vertical, 2).background(fill, in: Capsule())
     }
 }
@@ -195,13 +195,13 @@ struct CheckRow: View {
     let item: CheckItem
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: item.ok ? "checkmark" : "xmark").font(.system(size: 12, weight: .bold))
+            Image(systemName: item.ok ? "checkmark" : "xmark").font(.system(size: 13.5, weight: .bold))
                 .foregroundStyle(item.ok ? Theme.good : Theme.problem).frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name).fontWeight(.medium)
                 Text(item.detail).foregroundStyle(.secondary).textSelection(.enabled)
             }
-        }.font(.system(size: 12.5))
+        }.font(.system(size: 14))
     }
 }
 

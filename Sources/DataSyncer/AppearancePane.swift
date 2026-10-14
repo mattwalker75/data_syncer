@@ -11,16 +11,34 @@ struct AppearancePane: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Look", selection: $model.settings.appearance) {
-                    ForEach(Appearance.allCases, id: \.self) { Text($0.label).tag($0) }
+            Section("Theme") {
+                ForEach(Appearance.allCases, id: \.self) { a in
+                    let on = model.settings.activeThemeId == nil && model.settings.appearance == a
+                    themeRow(on: on, name: a.label, detail: a == .system ? "switches with your Mac's Appearance setting, including automatic dark mode at night" : nil) {
+                        model.settings.activeThemeId = nil; model.settings.appearance = a
+                    }
                 }
-                .pickerStyle(.radioGroup)
-                .disabled(model.settings.activeTheme != nil)
-                Text(model.settings.activeTheme != nil
-                     ? "The theme “\(model.settings.activeTheme!.name)” sets the look. Choose “System colours” below to set it here."
-                     : "Follow the system switches with your Mac's Appearance setting, including automatic dark mode at night.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                ForEach(model.settings.themes) { t in
+                    let on = model.settings.activeThemeId == t.id
+                    themeRow(on: on, name: t.name, detail: t.look.label.lowercased()) { model.settings.activeThemeId = t.id } extra: {
+                        HStack(spacing: 4) {
+                            Circle().fill(t.accent.color).frame(width: 12, height: 12)
+                            Circle().fill(t.good.color).frame(width: 12, height: 12)
+                            Circle().fill(t.attention.color).frame(width: 12, height: 12)
+                            Circle().fill(t.problem.color).frame(width: 12, height: 12)
+                        }
+                    } trailing: {
+                        Button("Edit…") { editing = t }
+                        Button { themeToDelete = t } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Delete this theme").accessibilityLabel("Delete the theme \(t.name)")
+                    }
+                }
+                HStack {
+                    Text("Your own theme sets the look, the accent, the good / attention / problem colours, and tints for the sidebar and cards.")
+                        .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("New…") { editing = CustomTheme(name: "", look: model.settings.appearance, accent: model.settings.accent) }
+                        .help("Make a theme of your own")
+                }
             }
             Section("Accent colour") {
                 HStack(spacing: 10) {
@@ -45,43 +63,9 @@ struct AppearancePane: View {
                 }
                 .disabled(model.settings.activeTheme != nil)
                 Text(model.settings.activeTheme != nil
-                     ? "The theme sets the accent."
+                     ? "The theme “\(model.settings.activeTheme!.name)” sets the accent. Choose Light, Dark or Follow the system above to pick one here."
                      : "\(accentName) — buttons, the selected job, badges and progress bars.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
-            }
-            Section {
-                HStack {
-                    Text("Your own themes").fontWeight(.semibold)
-                    Spacer()
-                    Button("New theme…") { editing = CustomTheme(name: "", look: model.settings.appearance, accent: model.settings.accent) }
-                }
-                HStack {
-                    Image(systemName: model.settings.activeThemeId == nil ? "checkmark.circle.fill" : "circle").foregroundStyle(Theme.accent)
-                    Text("System colours").fontWeight(model.settings.activeThemeId == nil ? .semibold : .regular)
-                    Text("the look and accent above").font(.system(size: 12)).foregroundStyle(.secondary)
-                    Spacer()
-                    if model.settings.activeThemeId != nil { Button("Use") { model.settings.activeThemeId = nil } }
-                }
-                ForEach(model.settings.themes) { t in
-                    let active = model.settings.activeThemeId == t.id
-                    HStack {
-                        Image(systemName: active ? "checkmark.circle.fill" : "circle").foregroundStyle(Theme.accent)
-                        Text(t.name).fontWeight(active ? .semibold : .regular)
-                        HStack(spacing: 4) {
-                            Circle().fill(t.accent.color).frame(width: 12, height: 12)
-                            Circle().fill(t.good.color).frame(width: 12, height: 12)
-                            Circle().fill(t.attention.color).frame(width: 12, height: 12)
-                            Circle().fill(t.problem.color).frame(width: 12, height: 12)
-                        }
-                        Text(t.look.label.lowercased()).font(.system(size: 12)).foregroundStyle(.secondary)
-                        Spacer()
-                        if !active { Button("Use") { model.settings.activeThemeId = t.id } }
-                        Button("Edit…") { editing = t }
-                        Button { themeToDelete = t } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Delete this theme").accessibilityLabel("Delete the theme \(t.name)")
-                    }
-                }
-                Text("A theme sets the look, the accent, the good / attention / problem colours, and tints for the sidebar and cards. Changes preview live while you adjust them.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -91,6 +75,24 @@ struct AppearancePane: View {
             Button("Delete theme", role: .destructive) { if let t = themeToDelete { delete(t) }; themeToDelete = nil }
             Button("Cancel", role: .cancel) { themeToDelete = nil }
         }
+    }
+
+    /// One line of the theme list: a check mark, the name, a detail, and whatever the caller adds. Clicking the line picks it.
+    @ViewBuilder private func themeRow<Extra: View, Trailing: View>(on: Bool, name: String, detail: String?, pick: @escaping () -> Void,
+                                                                   @ViewBuilder extra: () -> Extra = { EmptyView() },
+                                                                   @ViewBuilder trailing: () -> Trailing = { EmptyView() }) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle").foregroundStyle(on ? Theme.accent : Color.secondary)
+            Text(name).fontWeight(on ? .semibold : .regular)
+            extra()
+            if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(1) }
+            Spacer()
+            trailing()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: pick)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     }
 
     private var accentName: String {
@@ -122,7 +124,7 @@ struct ThemeEditor: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(theme.name.isEmpty ? "New theme" : "Edit “\(theme.name)”").font(.title2).fontWeight(.bold)
             Form {
-                TextField("Name", text: $theme.name, prompt: Text("Midnight"))
+                Field("Name", $theme.name, "Midnight")
                 Picker("Look", selection: $theme.look) { ForEach(Appearance.allCases, id: \.self) { Text($0.label).tag($0) } }
                 Section("Colours") {
                     ColorPicker("Accent", selection: $accent, supportsOpacity: false)
@@ -140,7 +142,7 @@ struct ThemeEditor: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("The main window shows the theme while you adjust it.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("The main window shows the theme while you adjust it.").font(.system(size: 13.5)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save and use") { save() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
@@ -170,7 +172,7 @@ struct ThemeEditor: View {
             Spacer()
             Button("Run…") {}.buttonStyle(.borderedProminent).tint(accent).allowsHitTesting(false).accessibilityHidden(true)
         }
-        .font(.system(size: 12.5))
+        .font(.system(size: 14))
     }
 
     private var built: CustomTheme {

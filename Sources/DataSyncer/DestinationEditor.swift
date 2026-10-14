@@ -64,6 +64,8 @@ struct DestinationEditor: View {
     @State private var maxIncrementals = 10
     @State private var backupTitle = ""
     @State private var enabled = true
+    @State private var includeSourceFolder = false
+    @State private var confirmRemove = false
     // test
     @State private var testing = false
     @State private var testResult: (ok: Bool, text: String)?
@@ -73,7 +75,7 @@ struct DestinationEditor: View {
             Text(destination == nil ? "New destination" : "Edit destination").font(.title2).fontWeight(.bold)
             Form {
                 Section {
-                    TextField("Name", text: $name, prompt: Text(kind == .usb ? "Backup drive" : "Second copy"))
+                    Field("Name", $name, kind == .usb ? "Backup drive" : "Second copy")
                     Picker("Where", selection: $kind) {
                         ForEach(KindChoice.allCases) { k in Text(k.rawValue).tag(k) }
                     }
@@ -89,34 +91,51 @@ struct DestinationEditor: View {
                     }
                     whereFields
                 }
+                Section("What goes into the folder") {
+                    Picker("Copy", selection: $includeSourceFolder) {
+                        Text("what is inside the source folder").tag(false)
+                        Text("the source folder itself, “\(sourceName)”").tag(true)
+                    }
+                    .pickerStyle(.radioGroup)
+                    Text(includeSourceFolder
+                         ? "The destination gets a folder named “\(sourceName)” with everything in it: \(exampleTarget)/\(sourceName)/…" + (destination?.copiesSourceFolder == true ? "" : " Changing this on a destination that already has copies makes the old layout look like extra files — a sync will offer to delete them, a backup chain starts over.")
+                         : "Only the files and folders inside the source go in: \(exampleTarget)/…" + (destination?.copiesSourceFolder == true ? " Changing this on a destination that already has copies makes the old layout look like extra files — a sync will offer to delete them, a backup chain starts over." : ""))
+                        .font(.system(size: 13.5)).foregroundStyle(.secondary)
+                }
                 Section("How") {
                     Picker("Mode", selection: $mode) { ForEach(ModeChoice.allCases) { Text($0.rawValue).tag($0) } }
                     switch mode {
                     case .sync:
                         Toggle("Delete files at the destination that the source no longer has", isOn: $deleteExtras)
                         Text("The destination is made to match the source. You see a preview of what will be copied and deleted before anything happens.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
                     case .fullOnly:
-                        TextField("Backup title", text: $backupTitle, prompt: Text(job.name))
+                        Field("Backup title", $backupTitle, job.name)
                         Text("Every run makes a new dated folder with a complete copy: \(BackupNaming.folderName(kind: .full, title: BackupNaming.sanitizeTitle(backupTitle.isEmpty ? job.name : backupTitle), date: Date())). Old backups are never deleted by Data Syncer.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
                     case .fullIncremental:
-                        TextField("Backup title", text: $backupTitle, prompt: Text(job.name))
+                        Field("Backup title", $backupTitle, job.name)
                         Picker("Incrementals are measured", selection: $chainStart) {
                             Text("since the last incremental (smallest backups)").tag(ChainStart.lastIncremental)
                             Text("since the last full (each one complete on its own)").tag(ChainStart.lastFull)
                         }
-                        Stepper("Most incrementals per chain: \(maxIncrementals)", value: $maxIncrementals, in: 1...365)
+                        LabeledContent("Most incrementals per chain") {
+                            HStack(spacing: 6) {
+                                Text("\(maxIncrementals)").monospacedDigit().frame(minWidth: 30, alignment: .trailing)
+                                Stepper("Most incrementals per chain", value: $maxIncrementals, in: 1...365).labelsHidden()
+                            }
+                        }
                         Text("After \(maxIncrementals) incrementals the next backup has to be a full one. When you run, you choose full or incremental for this destination.")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .font(.system(size: 13.5)).foregroundStyle(.secondary)
                     }
-                }
-                Section {
-                    Toggle("On — runs with the job", isOn: $enabled)
                 }
             }
             .formStyle(.grouped)
             HStack {
+                if let d = destination {
+                    Button("Remove destination…", role: .destructive) { confirmRemove = true }
+                        .help("Takes “\(d.name)” off this job. Nothing at the destination is touched.")
+                }
                 if kind == .network || kind == .sftp || kind.provider != nil {
                     Button(testing ? "Testing…" : "Test connection") { Task { await test() } }.disabled(testing || !valid)
                     if kind.provider != nil {
@@ -124,7 +143,7 @@ struct DestinationEditor: View {
                             .help("Creates the destination folder in the service — the one thing Data Syncer only does when you ask")
                     }
                     if let r = testResult {
-                        HStack(spacing: 6) { Dot(color: r.ok ? Theme.good : Theme.problem); Text(r.text).font(.system(size: 12)).lineLimit(2) }
+                        HStack(spacing: 6) { Dot(color: r.ok ? Theme.good : Theme.problem); Text(r.text).font(.system(size: 13.5)).lineLimit(2) }
                             .frame(maxWidth: 360, alignment: .leading).help(r.text)
                     }
                 }
@@ -135,12 +154,30 @@ struct DestinationEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 660)
+        .frame(width: 660, height: 820)
         .onAppear(perform: load)
         .sheet(item: $addingAccount) { p in
             CloudAccountSheet(provider: p) { account in accountId = account.id.uuidString }
         }
         .alert(item: $problem) { n in Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK"))) }
+        .confirmationDialog("Remove the destination “\(destination?.name ?? "")” from this job?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove destination", role: .destructive) { if let d = destination { model.remove(d, from: job) }; dismiss() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Nothing at the destination is touched: the copies and backups there stay as they are.")
+        }
+    }
+
+    private var sourceName: String { job.sourceURL.lastPathComponent }
+    /// where the copies land, for the sentence under the "what goes in" choice
+    private var exampleTarget: String {
+        switch kind {
+        case .usb: return "/" + (volume.isEmpty ? "drive" : volume) + "/" + folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        case .folder, .iCloud:
+            let p = Formatting.shortPath(folder.trimmingCharacters(in: .whitespaces))
+            return p.isEmpty ? "the folder" : (p.count > 48 ? "…/" + (p as NSString).lastPathComponent : p)
+        default: return folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).isEmpty ? "the folder" : Formatting.shortPath(folder.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")))
+        }
     }
 
     /// is the saved secret the right kind for the sign-in method chosen now?
@@ -157,7 +194,7 @@ struct DestinationEditor: View {
                 ForEach(volumes, id: \.self) { Text($0).tag($0) }
             }
             HStack {
-                TextField("Folder on the drive", text: $folder, prompt: Text("backup/Work documents")).font(.system(.body, design: .monospaced))
+                PlainTextField("backup/Work documents", text: $folder, monospaced: true, label: "Folder on the drive")
                 Button("Choose…") {
                     let mount = URL(fileURLWithPath: "/Volumes/\(volume)")
                     if let url = FolderPicker.choose(title: "Choose the folder on the drive", message: "The folder on “\(volume)” that holds this destination's copies. It must already exist.", start: mount) {
@@ -169,7 +206,7 @@ struct DestinationEditor: View {
             note("The drive is found by its name whenever you run, so it can be plugged into any port. The folder on it must already exist — Data Syncer never creates it, and never uses a whole drive as a destination.")
         case .iCloud, .folder:
             HStack {
-                TextField(kind == .iCloud ? "Folder in iCloud Drive" : "Folder", text: $folder, prompt: Text("/Volumes/Backup/Work")).font(.system(.body, design: .monospaced))
+                PlainTextField("/Volumes/Backup/Work", text: $folder, monospaced: true, label: kind == .iCloud ? "Folder in iCloud Drive" : "Folder")
                 Button("Choose…") {
                     let start = kind == .iCloud ? iCloudRoot : (folder.isEmpty ? nil : URL(fileURLWithPath: folder))
                     if let url = FolderPicker.choose(title: "Choose the destination folder", message: "The folder that holds this destination's copies. It must already exist.", start: start) { folder = url.path }
@@ -179,14 +216,14 @@ struct DestinationEditor: View {
                  ? "iCloud Drive is a folder on this Mac that macOS keeps in the cloud; pick a folder inside it. Files are uploaded by macOS after Data Syncer copies them."
                  : "The folder must already exist — Data Syncer never creates it. It can be on this Mac or a drive or share that is already connected.")
         case .network:
-            TextField("Share address", text: $shareAddress, prompt: Text("smb://nas.local/backups")).font(.system(.body, design: .monospaced))
-            TextField("Folder in the share", text: $folder, prompt: Text("Work documents (leave empty for the share itself)")).font(.system(.body, design: .monospaced))
-            TextField("User name", text: $shareUser, prompt: Text("leave empty for a guest share"))
+            Field("Share address", $shareAddress, "smb://nas.local/backups", mono: true)
+            Field("Folder in the share", $folder, "Work documents (leave empty for the share itself)", mono: true)
+            Field("User name", $shareUser, "leave empty for a guest share")
             SecureField("Password", text: $secret, prompt: Text(savedSecretApplies ? "(saved — type to replace)" : "kept in your Keychain"))
             note("If the share is already connected in Finder it is used as it is. Otherwise Data Syncer connects it with this sign-in when you run (smb:// for Windows, NAS and Mac shares; afp:// for older Macs). The folder must already exist.")
         case .sftp:
             HStack {
-                TextField("Server", text: $host, prompt: Text("nas.local or 192.168.1.5")).font(.system(.body, design: .monospaced))
+                PlainTextField("nas.local or 192.168.1.5", text: $host, monospaced: true, label: "Server")
                 if !configHosts.isEmpty {
                     Menu("From ~/.ssh/config") {
                         ForEach(configHosts) { h in
@@ -194,10 +231,10 @@ struct DestinationEditor: View {
                         }
                     }.frame(width: 170)
                 }
-                TextField("Port", text: $port).frame(width: 60)
+                PlainTextField("22", text: $port, label: "Port").frame(width: 60)
             }
-            TextField("User name", text: $user)
-            TextField("Folder on the server", text: $folder, prompt: Text("/volume1/backups/Work (or relative to the home folder)")).font(.system(.body, design: .monospaced))
+            Field("User name", $user)
+            Field("Folder on the server", $folder, "/volume1/backups/Work (or relative to the home folder)", mono: true)
             Picker("Sign in with", selection: $auth) { ForEach(SSHAuth.allCases) { Text($0.rawValue).tag($0) } }
             switch auth {
             case .terminal:
@@ -205,7 +242,7 @@ struct DestinationEditor: View {
             case .key:
                 HStack {
                     if sshKeys.isEmpty {
-                        TextField("Key file", text: $keyPath, prompt: Text("~/.ssh/id_ed25519")).font(.system(.body, design: .monospaced))
+                        PlainTextField("~/.ssh/id_ed25519", text: $keyPath, monospaced: true, label: "Key file")
                     } else {
                         Picker("Key file", selection: $keyPath) {
                             ForEach(sshKeys) { k in Text("\(k.name)  \(k.type) \(k.comment)").tag(k.path) }
@@ -225,14 +262,14 @@ struct DestinationEditor: View {
             }
         case .s3:
             accountPicker(.s3)
-            TextField("Bucket", text: $bucket, prompt: Text("my-backups")).font(.system(.body, design: .monospaced))
-            TextField("Region", text: $region, prompt: Text("us-east-1")).font(.system(.body, design: .monospaced))
-            TextField("Service address (S3-compatible only)", text: $endpoint, prompt: Text("leave empty for Amazon; e.g. https://s3.us-west-004.backblazeb2.com")).font(.system(.body, design: .monospaced))
-            TextField("Folder in the bucket", text: $folder, prompt: Text("work-documents (leave empty for the bucket itself)")).font(.system(.body, design: .monospaced))
+            Field("Bucket", $bucket, "my-backups", mono: true)
+            Field("Region", $region, "us-east-1", mono: true)
+            Field("Service address (S3-compatible only)", $endpoint, "leave empty for Amazon; e.g. https://s3.us-west-004.backblazeb2.com", mono: true)
+            Field("Folder in the bucket", $folder, "work-documents (leave empty for the bucket itself)", mono: true)
             note("The bucket must already exist — Data Syncer never creates buckets. The folder must exist too; “Make this folder” below creates it in the bucket when you ask. Links in the source can't be kept in S3 and are reported as skipped.")
         case .googleDrive, .dropbox, .oneDrive:
             accountPicker(kind.provider!)
-            TextField("Folder in \(kind.rawValue)", text: $folder, prompt: Text("Data Syncer/Work documents")).font(.system(.body, design: .monospaced))
+            Field("Folder in \(kind.rawValue)", $folder, "Data Syncer/Work documents", mono: true)
             note(kind == .googleDrive
                  ? "A path under My Drive. Data Syncer asks Google only for permission over files it makes itself, so the folder has to be made by Data Syncer: use “Make this folder” below. Links in the source are reported as skipped."
                  : "A path from the top of your \(kind.rawValue). The folder must already exist; “Make this folder” below creates it when you ask. Links in the source are reported as skipped.")
@@ -253,7 +290,7 @@ struct DestinationEditor: View {
         }
     }
 
-    private func note(_ s: String) -> some View { Text(s).font(.system(size: 12)).foregroundStyle(.secondary) }
+    private func note(_ s: String) -> some View { Text(s).font(.system(size: 13.5)).foregroundStyle(.secondary) }
 
     private func useConfig(_ h: SSHConfigHost) {
         host = h.hostName ?? h.alias
@@ -287,7 +324,7 @@ struct DestinationEditor: View {
         sshKeys = SSHInfo.keys(in: SSHInfo.sshDir)
         configHosts = SSHInfo.configHosts(at: SSHInfo.sshDir.appendingPathComponent("config"))
         guard let d = destination else { volume = volumes.first ?? ""; keyPath = sshKeys.first?.path ?? ""; return }
-        name = d.name; folder = d.folder; enabled = d.enabled; backupTitle = d.backupTitle
+        name = d.name; folder = d.folder; enabled = d.enabled; backupTitle = d.backupTitle; includeSourceFolder = d.copiesSourceFolder
         hadSecret = model.secrets.has(SecretAccount.destination(d.id))   // never reads it (that prompts the Keychain)
         switch d.kind {
         case .usbDrive(let v): kind = .usb; volume = v
@@ -338,7 +375,7 @@ struct DestinationEditor: View {
         }
         return Destination(id: destination?.id ?? UUID(), name: name.trimmingCharacters(in: .whitespaces), kind: k,
                            folder: folder.trimmingCharacters(in: .whitespaces), mode: m, enabled: enabled, backupTitle: backupTitle,
-                           usesPassword: kind == .sftp ? auth == .password : nil)
+                           usesPassword: kind == .sftp ? auth == .password : nil, includeSourceFolder: includeSourceFolder ? true : nil)
     }
 
     /// The secret to use: what was typed, else what is saved (when it is the right kind for the method chosen).

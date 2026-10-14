@@ -33,14 +33,16 @@ struct JobDetailView: View {
     private var header: some View {
         let last = Formatting.lastRunLine(model.history.lastRun(of: job.id))
         return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text(job.name).font(.system(size: 24, weight: .bold))
-                Button("Rename…") { model.sheet = .editJob(job) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
+            HStack(alignment: .center, spacing: 10) {
+                Text(job.name).font(.system(size: 24, weight: .bold)).lineLimit(1)
+                Button("Rename…") { model.sheet = .editJob(job) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 14))
+                Spacer()
+                JobActions()
             }
             HStack(spacing: 8) { Dot(color: last.color); Text(last.text) }.foregroundStyle(.primary)
             if model.isRunning, !model.isRunning(job) {
                 Text("Run… and Restore… are unavailable until \(model.runningName) finishes. You can still look around, edit a job or check destinations.")
-                    .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
             }
         }
     }
@@ -51,7 +53,7 @@ struct JobDetailView: View {
                 Image(systemName: "folder").font(.system(size: 24)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     SectionLabel("Source")
-                    Text(Formatting.shortPath(job.sourcePath)).font(.system(size: 14, weight: .semibold, design: .monospaced)).textSelection(.enabled).help(job.sourcePath)
+                    Text(Formatting.shortPath(job.sourcePath)).font(.system(size: 15, weight: .semibold, design: .monospaced)).textSelection(.enabled).help(job.sourcePath)
                 }
                 Spacer()
                 sourceStats
@@ -84,7 +86,7 @@ struct JobDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 SectionLabel("Destinations · \(job.destinations.count)")
-                if job.destinations.count > 1 { Text("they run in this order").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                if job.destinations.count > 1 { Text("they run in this order").font(.system(size: 13)).foregroundStyle(.secondary) }
                 Spacer()
                 Button { model.sheet = .newDestination(job) } label: { Label("Add destination", systemImage: "plus") }
                     .buttonStyle(.link).foregroundStyle(Theme.accent)
@@ -120,13 +122,13 @@ struct JobDetailView: View {
                 SectionLabel("Recent runs")
                 Spacer()
                 if all.count > runs.count {
-                    Button("See all \(all.count) runs") { model.settingsTab = "history"; openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12))
+                    Button("See all \(all.count) runs") { model.settingsTab = "history"; openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 13.5))
                 }
             }
             if runs.isEmpty {
-                Text("This job hasn't run yet.").foregroundStyle(.secondary).font(.system(size: 12.5))
+                Text("This job hasn't run yet.").foregroundStyle(.secondary).font(.system(size: 14))
             } else {
-                Text("Click a run to see what happened.").font(.system(size: 11.5)).foregroundStyle(.secondary)
+                Text("Click a run to see what happened.").font(.system(size: 13)).foregroundStyle(.secondary)
                 // one button per run (a GridRow's modifiers would land on each cell, leaving dead gaps)
                 VStack(spacing: 0) {
                     ForEach(Array(runs.enumerated()), id: \.element.id) { i, run in
@@ -138,7 +140,7 @@ struct JobDetailView: View {
                                 Text(o.text).foregroundStyle(o.color).fontWeight(.semibold).frame(width: 110, alignment: .leading)
                                 Text(Formatting.duration(run.finishedAt.timeIntervalSince(run.startedAt))).foregroundStyle(.secondary).frame(width: 90, alignment: .leading)
                             }
-                            .font(.system(size: 12.5))
+                            .font(.system(size: 14))
                             .padding(.vertical, 7)
                             .contentShape(Rectangle())
                         }
@@ -169,19 +171,19 @@ struct DestinationRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(d.name).fontWeight(.semibold)
-                        Button("Edit…") { model.sheet = .editDestination(job, d) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 11.5))
+                        Button("Edit…") { model.sheet = .editDestination(job, d) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 13))
                     }
-                    Text(Formatting.place(d) + (model.accountLabel(d.kind).map { " · \($0)" } ?? "")).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    Text(Formatting.place(d) + (model.accountLabel(d.kind).map { " · \($0)" } ?? "")).font(.system(size: 13.5, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 3) {
                     Badge(text: d.mode.label, fill: badge.fill, color: badge.text)
-                    Text(Formatting.modeNote(d.mode)).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    Text(Formatting.modeNote(d.mode)).font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 .frame(width: 180, alignment: .leading)
                 HStack(spacing: 8) {
                     Dot(color: status.1)
-                    Text(status.0).font(.system(size: 12.5)).lineLimit(2)
+                    Text(status.0).font(.system(size: 14)).lineLimit(2)
                 }
                 .frame(width: 240, alignment: .leading)
                 .help(last?.problems.joined(separator: "\n") ?? "")

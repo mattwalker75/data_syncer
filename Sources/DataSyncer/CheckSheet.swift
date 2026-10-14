@@ -24,7 +24,7 @@ struct CheckSheet: View {
                             SectionLabel("Source")
                             CheckRow(item: source)
                             if !source.ok, source.detail.contains("Full Disk Access") {
-                                Button("Open Privacy & Security settings…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 12.5))
+                                Button("Open Privacy & Security settings…") { FullDiskAccess.openSettings() }.buttonStyle(.link).foregroundStyle(Theme.accent).font(.system(size: 14))
                             }
                         }
                     }
@@ -32,7 +32,7 @@ struct CheckSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 8) {
                                 SectionLabel(d.name)
-                                if !d.enabled { Text("off — skipped").font(.system(size: 11)).foregroundStyle(.secondary) }
+                                if !d.enabled { Text("off — skipped").font(.system(size: 12.5)).foregroundStyle(.secondary) }
                             }
                             if let r = results[d.id] {
                                 ForEach(r.items) { CheckRow(item: $0) }
@@ -40,7 +40,7 @@ struct CheckSheet: View {
                                     CheckRow(item: CheckItem(name: "Next backup", ok: true, detail: r.canIncremental ? r.incrementalNote : r.incrementalNote + " The next backup must be a full one."))
                                 }
                             } else if d.enabled {
-                                Text("waiting…").font(.system(size: 12.5)).foregroundStyle(.secondary)
+                                Text("waiting…").font(.system(size: 14)).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -48,7 +48,7 @@ struct CheckSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
-                Text(verdict).foregroundStyle(.secondary).font(.system(size: 12.5))
+                Text(verdict).foregroundStyle(.secondary).font(.system(size: 14))
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             }

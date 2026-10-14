@@ -48,6 +48,7 @@ Sources/DataSyncer/
   RestoreScreen.swift  RestoreSession (from RestoreEvents) and the restore screen
   SettingsView.swift   the Settings tabs; AppearancePane.swift (look, accent, themes + ThemeEditor), AccountsPane.swift
   Themes.swift         ThemeColor, AccentChoice, CustomTheme, and `Theme` — the colours the views read, applied from settings
+  PlainTextField.swift NSTextField-backed text field (and the `Field` form row) the editors use — SwiftUI's drops a trailing space from view in this window
   CloudAccountSheet.swift  per-service setup guide + sign-in; DestinationEditor.swift  every destination kind's form
   Formatting.swift     dates/sizes/durations in words, status lines, colours, small shared views
 Tests/DataSyncerCoreTests/  Helpers, PlannerTests, RunnerTests, SafetyTests, SSHTests (private sshd), CloudTests (fake HTTP)

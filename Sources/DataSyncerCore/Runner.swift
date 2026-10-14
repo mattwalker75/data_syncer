@@ -247,7 +247,18 @@ public final class JobRunner: @unchecked Sendable {
                 do { source = try Scanner.scan(job.sourceURL) } catch let e as DSError { check("Source", false, e.message); throw e }
                 check("Source", true, "\(source!.fileCount) files · \(ByteCount.string(source!.totalBytes))")
             }
-            let src = source!
+            // "copy the folder itself": the scan is seen from the source's parent, under the source's name
+            var src = source!
+            var sourceRoot = job.sourceURL
+            if d.copiesSourceFolder {
+                let name = job.sourceURL.lastPathComponent
+                guard !name.isEmpty, name != "/", let meta = LocalStorage.meta(at: job.sourceURL) else {
+                    let msg = "The source \(job.sourceURL.path) has no folder name to copy. Choose a folder inside a drive, or set this destination to copy only what is inside the source."
+                    check("Source", false, msg); throw DSError(msg)
+                }
+                src = src.nested(under: name, meta: meta)
+                sourceRoot = job.sourceURL.deletingLastPathComponent()
+            }
             // every destination hears about what the source could not read (so nothing there is treated as deleted)
             if !src.problems.isEmpty {
                 for (path, why) in src.problems.prefix(20) { result.problems.append("\(path): \(why) (source — not copied, and not deleted at the destination)") }
@@ -266,11 +277,11 @@ public final class JobRunner: @unchecked Sendable {
             // 3. plan and copy
             switch d.mode {
             case .sync(let deleteExtras):
-                try await runSync(job, d, storage, src, deleteExtras: deleteExtras, result: &result, onEvent: onEvent)
+                try await runSync(job, d, storage, src, from: sourceRoot, deleteExtras: deleteExtras, result: &result, onEvent: onEvent)
             case .fullOnly:
-                try await runBackup(job, d, storage, src, choice: .full, chainStart: .lastFull, maxIncrementals: 0, result: &result, onEvent: onEvent)
+                try await runBackup(job, d, storage, src, from: sourceRoot, choice: .full, chainStart: .lastFull, maxIncrementals: 0, result: &result, onEvent: onEvent)
             case .fullIncremental(let chainStart, let maxIncrementals):
-                try await runBackup(job, d, storage, src, choice: choice, chainStart: chainStart, maxIncrementals: maxIncrementals, result: &result, onEvent: onEvent)
+                try await runBackup(job, d, storage, src, from: sourceRoot, choice: choice, chainStart: chainStart, maxIncrementals: maxIncrementals, result: &result, onEvent: onEvent)
             }
             return finish(result.problems.isEmpty ? .finished : .finishedWithProblems)
         } catch is CancellationError {
@@ -286,7 +297,7 @@ public final class JobRunner: @unchecked Sendable {
 
     // MARK: sync
 
-    private func runSync(_ job: Job, _ d: Destination, _ storage: Storage, _ src: Scanner.Result, deleteExtras: Bool,
+    private func runSync(_ job: Job, _ d: Destination, _ storage: Storage, _ src: Scanner.Result, from sourceRoot: URL, deleteExtras: Bool,
                          result: inout DestinationResult, onEvent: @escaping @Sendable (RunEvent) -> Void) async throws {
         var state: SyncState
         do { state = try await Records.loadSyncState(from: storage) ?? SyncState() }
@@ -325,7 +336,7 @@ public final class JobRunner: @unchecked Sendable {
                 try Task.checkCancellation()
                 progress.currentPath = file.path
                 onEvent(.progress(d.id, progress))
-                let action = try await copyOne(file, from: job.sourceURL, to: storage, prefix: "", progress: &progress, onEvent: onEvent, d.id)
+                let action = try await copyOne(file, from: sourceRoot, to: storage, prefix: "", progress: &progress, onEvent: onEvent, d.id)
                 onEvent(.file(d.id, file.path, action))
                 switch action {
                 case .copied, .linked:
@@ -358,7 +369,7 @@ public final class JobRunner: @unchecked Sendable {
 
     // MARK: backups
 
-    private func runBackup(_ job: Job, _ d: Destination, _ storage: Storage, _ src: Scanner.Result, choice: BackupChoice?,
+    private func runBackup(_ job: Job, _ d: Destination, _ storage: Storage, _ src: Scanner.Result, from sourceRoot: URL, choice: BackupChoice?,
                            chainStart: ChainStart, maxIncrementals: Int,
                            result: inout DestinationResult, onEvent: @escaping @Sendable (RunEvent) -> Void) async throws {
         let title = job.backupTitle(for: d)
@@ -400,7 +411,7 @@ public final class JobRunner: @unchecked Sendable {
                 try Task.checkCancellation()
                 progress.currentPath = file.path
                 onEvent(.progress(d.id, progress))
-                let action = try await copyOne(file, from: job.sourceURL, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
+                let action = try await copyOne(file, from: sourceRoot, to: storage, prefix: folder, progress: &progress, onEvent: onEvent, d.id)
                 onEvent(.file(d.id, file.path, action))
                 switch action {
                 case .copied, .linked: result.copied += 1; copied.append(file.path); if !file.meta.isSymlink { bytes += file.meta.size }

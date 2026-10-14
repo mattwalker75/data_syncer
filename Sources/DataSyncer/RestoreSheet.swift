@@ -41,7 +41,7 @@ struct RestoreSheet: View {
                 backups
                 options
                 HStack {
-                    Text(verdict).font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(2)
+                    Text(verdict).font(.system(size: 14)).foregroundStyle(.secondary).lineLimit(2)
                     Spacer()
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                     Button("Restore") { start() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!ready || deleting)
@@ -68,7 +68,7 @@ struct RestoreSheet: View {
             HStack {
                 SectionLabel("Backups at \(destination?.name ?? "")")
                 if loading || deleting { ProgressView().controlSize(.mini) }
-                if deleting { Text("deleting…").font(.system(size: 11.5)).foregroundStyle(.secondary) }
+                if deleting { Text("deleting…").font(.system(size: 13)).foregroundStyle(.secondary) }
                 Spacer()
                 Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Look again").accessibilityLabel("Look again").disabled(deleting)
             }
@@ -102,17 +102,17 @@ struct RestoreSheet: View {
             Badge(text: isFull ? "Full" : "Incremental", fill: badge.fill, color: badge.text).frame(width: 90, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(e.parsed.date.formatted(date: .abbreviated, time: .shortened)).fontWeight(.medium)
-                Text(e.folder).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                Text(e.folder).font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
             }
             Spacer()
             if let m = e.manifest {
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(Formatting.count(m.fileCount)) file\(m.fileCount == 1 ? "" : "s") · \(Formatting.bytes(m.totalBytes))").font(.system(size: 12))
-                    if let b = m.basedOn { Text("since \(b)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary) }
-                    else if !isFull { Text("no parent recorded").font(.system(size: 11)).foregroundStyle(Theme.problem) }
+                    Text("\(Formatting.count(m.fileCount)) file\(m.fileCount == 1 ? "" : "s") · \(Formatting.bytes(m.totalBytes))").font(.system(size: 13.5))
+                    if let b = m.basedOn { Text("since \(b)").font(.system(size: 12.5, design: .monospaced)).foregroundStyle(.secondary) }
+                    else if !isFull { Text("no parent recorded").font(.system(size: 12.5)).foregroundStyle(Theme.problem) }
                 }
             } else {
-                Text("no readable record").font(.system(size: 12)).foregroundStyle(Theme.problem)
+                Text("no readable record").font(.system(size: 13.5)).foregroundStyle(Theme.problem)
                     .help("Named like a backup but its .datasyncer/manifest.json is missing or damaged — it can't be restored or used in a chain.")
             }
             Button { toDelete = e } label: { Image(systemName: "trash") }.buttonStyle(.plain).foregroundStyle(.secondary).help("Delete this backup…").accessibilityLabel("Delete the backup \(e.folder)").disabled(deleting)
@@ -133,28 +133,28 @@ struct RestoreSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Restore into").frame(width: 90, alignment: .leading)
-                TextField("", text: $targetPath, prompt: Text("an empty folder on this Mac")).font(.system(.body, design: .monospaced))
+                PlainTextField("an empty folder on this Mac", text: $targetPath, monospaced: true, label: "Restore into")
                 Button("Choose…") {
                     if let url = FolderPicker.choose(title: "Choose where to restore", message: "The folder the backup is put into. An empty folder is best (you can make one here); existing files with the same names are replaced.", start: targetPath.isEmpty ? nil : targetURL, canCreate: true) { targetPath = url.path }
                 }
             }
             Toggle("Remove files the backups recorded as deleted (so the result matches the source as it was then)", isOn: $removeDeleted)
-                .font(.system(size: 12.5))
+                .font(.system(size: 14))
             Text("Off: those files are left in place for you to look at. Only matters when an incremental in the chain recorded deletions.")
-                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                .font(.system(size: 13)).foregroundStyle(.secondary)
             if case .success(let p) = plan {
                 HStack(spacing: 8) { Dot(color: Theme.good); Text("\(p.summary) — \(p.chain.joined(separator: " → "))") }
-                    .font(.system(size: 12.5)).lineLimit(3)
+                    .font(.system(size: 14)).lineLimit(3)
                 if !p.missing.isEmpty {
                     HStack(spacing: 8) { Dot(color: Theme.attention); Text("\(p.missing.count) file\(p.missing.count == 1 ? "" : "s") the backups never managed to copy will be missing: \(p.missing.prefix(3).joined(separator: ", "))\(p.missing.count > 3 ? "…" : "")") }
-                        .font(.system(size: 12)).lineLimit(2)
+                        .font(.system(size: 13.5)).lineLimit(2)
                 }
             } else if case .failure(let e) = plan {
-                HStack(spacing: 8) { Dot(color: Theme.problem); Text(e.message) }.font(.system(size: 12.5))
+                HStack(spacing: 8) { Dot(color: Theme.problem); Text(e.message) }.font(.system(size: 14))
             }
             if let danger = targetWarning {
                 HStack(alignment: .firstTextBaseline, spacing: 8) { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.attention); Text(danger) }
-                    .font(.system(size: 12.5)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .font(.system(size: 14)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.attention.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             }
         }
