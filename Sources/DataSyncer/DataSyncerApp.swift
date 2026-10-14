@@ -32,6 +32,18 @@ struct DataSyncerApp: App {
             }
         }
 
+        // the item by the clock: status, the last run, start a job, cancel, open, quit (MenuBarPanel.swift)
+        MenuBarExtra {
+            MenuBarPanel()
+                .environmentObject(model)
+                .preferredColorScheme(model.lookInForce.colorScheme)
+                .tint(Theme.accent)
+        } label: {
+            Image(systemName: MenuBarIcon.name(model))
+                .accessibilityLabel(model.isRunning ? "Data Syncer, running" : "Data Syncer")
+        }
+        .menuBarExtraStyle(.window)
+
         Settings {
             SettingsView()
                 .environmentObject(model)

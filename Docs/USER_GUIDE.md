@@ -24,6 +24,21 @@ on its own: open the app, pick a job, press **Run…**.
 - At the top of the page: **Check destinations** (is everything reachable and writable? — copies
   nothing), **Restore…**, **Run…**.
 
+## The menu bar item
+
+While Data Syncer is open there is a small symbol by the clock. Click it for a panel that shows
+whether a job is running and how far it is (with **Cancel**), how the last run went, a **Run** list
+(click a job to start it now — a Full + incremental destination gets an incremental when its chain
+allows one, otherwise a full; a sync destination still shows its preview in the app, which comes
+forward for it), **Open Data Syncer**, and **Quit**. There are no logs and no settings in the panel;
+**Open Data Syncer** is one click away for those. The symbol turns into a sync arrow while a job runs
+and carries a mark after a run with problems.
+
+Closing the window does not quit: the app stays in the Dock and the menu bar, and a run that is
+going carries on. **Quit** (in the panel, or ⌘Q) ends everything; if a run is going it asks first.
+**Settings → General → Open Data Syncer at login** puts the item there from the moment you sign in
+(macOS may ask you to allow it under Login Items). Nothing runs on its own either way.
+
 ## Making a job
 
 **New job** asks for a name and the source folder (it must exist and be readable). Then
@@ -159,7 +174,8 @@ deleting. It never deletes a backup on its own.
 
 ## Settings (the gear, or ⌘,)
 
-- **General** — where the jobs and settings live, and a shortcut to Full Disk Access. When a source is
+- **General** — where the jobs and settings live, **Open Data Syncer at login** (the menu bar item
+  from sign-in), and a shortcut to Full Disk Access. When a source is
   in Desktop, Documents or Downloads, macOS first asks with its own prompt the first time — allow it;
   only if a run still says the folder can't be read is Full Disk Access needed. (With the standard
   build, Full Disk Access has to be granted again after each rebuild — see SCRIPTS.md for a way to

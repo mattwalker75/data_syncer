@@ -47,6 +47,7 @@ Sources/DataSyncer/
   RestoreSheet.swift   Restore…: destination → BackupCatalog → point, target, removeDeleted; delete a backup
   RestoreScreen.swift  RestoreSession (from RestoreEvents) and the restore screen
   SettingsView.swift   the Settings tabs; AppearancePane.swift (look, accent, themes + ThemeEditor), AccountsPane.swift
+  MenuBarPanel.swift   the menu bar item's panel (status, last run, Run list, Open, Quit), MenuBarIcon, LoginItem (SMAppService)
   Design.swift         the design tokens (type scale, surfaces, radii) and the shared views: Card, GroupedCard, IconTile, Badge, Dot, SectionLabel, CheckRow, StatTile
   Themes.swift         ThemeColor, AccentChoice, CustomTheme, and `Theme` — the colours the views read, applied from settings
   PlainTextField.swift NSTextField-backed text field (and the `Field` form row) the editors use — SwiftUI's drops a trailing space from view in this window

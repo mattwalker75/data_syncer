@@ -44,6 +44,23 @@ struct MainWindow: View {
         if ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.hasPrefix("settings") == true {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { openSettings() }
         }
+        // development only: DATASYNCER_AUTOSHEET=menubar shows the menu bar panel in a plain window for a screenshot
+        // (a window the app makes itself, so macOS never restores it at the next launch)
+        if ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"] == "menubar" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let w = NSWindow(contentRect: NSRect(x: 700, y: 400, width: 340, height: 340), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                w.title = "Menu bar panel"; w.isReleasedWhenClosed = false
+                w.contentView = NSHostingView(rootView: MenuBarPanel().environmentObject(model).preferredColorScheme(model.lookInForce.colorScheme).tint(Theme.accent))
+                w.makeKeyAndOrderFront(nil)
+            }
+        }
+        // development only: DATASYNCER_DEBUG_WINDOWS=1 lists the app's windows (is the menu bar item there, and where?)
+        if ProcessInfo.processInfo.environment["DATASYNCER_DEBUG_WINDOWS"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                for w in NSApp.windows { print("window:", w.className, w.frame, "visible:", w.isVisible, "level:", w.level.rawValue, "title:", w.title) }
+                fflush(stdout)
+            }
+        }
         guard let spec = ProcessInfo.processInfo.environment["DATASYNCER_WINDOW"] else { return }
         let n = spec.split(separator: ",").compactMap { Double($0) }
         guard n.count == 4, let screen = NSScreen.screens.first, let window = NSApp.windows.first(where: { $0.title == "Data Syncer" }) ?? NSApp.windows.first else { return }

@@ -241,6 +241,14 @@ final class AppModel: ObservableObject {
         sheet = .runOptions(job)
     }
 
+    /// From the menu bar: start now, letting Data Syncer choose full or incremental. A job with nothing turned
+    /// on is refused quietly (the panel's button is off for it).
+    func startFromMenuBar(_ job: Job) {
+        guard !isRunning, !job.destinations.filter(\.enabled).isEmpty else { return }
+        selectedJobId = job.id
+        start(job, choices: [:])
+    }
+
     func start(_ job: Job, choices: [Destination.ID: BackupChoice]) {
         guard !isRunning else { return }
         let session = RunSession(job: job)

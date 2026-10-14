@@ -8,6 +8,8 @@ struct SettingsView: View {
     @State private var confirmClear = false
     @State private var selectedRun: RunReport.ID?
     @State private var showingRun: RunReport?
+    @State private var loginItem = LoginItem.isOn
+    @State private var loginProblem: String?
 
     var body: some View {
         TabView(selection: $model.settingsTab) {
@@ -19,6 +21,7 @@ struct SettingsView: View {
         }
         .frame(width: 640, height: 560)
         .onAppear {
+            loginItem = LoginItem.isOn
             // development only: DATASYNCER_AUTOSHEET=settings:<tab> opens on that tab
             if let t = ProcessInfo.processInfo.environment["DATASYNCER_AUTOSHEET"]?.split(separator: ":").dropFirst().first.map(String.init) { model.settingsTab = t }
         }
@@ -32,6 +35,18 @@ struct SettingsView: View {
                     Text(model.store.url.deletingLastPathComponent().path).font(DS.mono).textSelection(.enabled)
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([model.store.url]) }.buttonStyle(.link).foregroundStyle(Theme.accent).font(DS.secondary)
                 }
+            }
+            Section("Menu bar") {
+                Toggle("Open Data Syncer at login", isOn: $loginItem)
+                    .onChange(of: loginItem) { _, on in
+                        guard on != LoginItem.isOn else { return }
+                        do { try LoginItem.set(on); loginProblem = nil }
+                        catch { loginProblem = error.localizedDescription; loginItem = LoginItem.isOn }
+                    }
+                Text(loginProblem ?? (LoginItem.needsApproval
+                     ? "macOS is waiting for your say-so: System Settings → General → Login Items & Extensions, then allow Data Syncer."
+                     : "Puts Data Syncer in the menu bar (by the clock) as soon as you sign in. Nothing runs on its own — a job still waits for you to start it. The item shows whether a job is running, the last run, and can start, cancel, open or quit."))
+                    .font(DS.body).foregroundStyle(loginProblem == nil ? .secondary : Theme.problem)
             }
             Section("Reading protected folders") {
                 Text("If a source is in Desktop, Documents, Downloads or another folder macOS protects and a run says it can't be read, give Data Syncer Full Disk Access.")

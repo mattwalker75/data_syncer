@@ -2,7 +2,19 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
-## [0.9.5] — 2026-10-14 — the professional look
+## [0.9.6] — 2026-10-14 — the menu bar item
+
+### Added
+- **A menu bar item** (by the clock) while the app runs: whether a job is running and how far it is
+  (with Cancel), the last run and how it went, a **Run** list that starts a job right away (full or
+  incremental left to Data Syncer; a sync still shows its preview in the app), **Open Data Syncer**
+  and **Quit**. No logs and no settings there. The symbol changes while a job runs and after a run
+  with problems. Closing the window leaves the app in the Dock and the menu bar; Quit (in the menu
+  bar or ⌘Q) ends everything; quitting mid-run asks first.
+- **Open Data Syncer at login** in Settings → General: the item is there from sign-in. Nothing runs
+  on its own.
+- Dev hook `DATASYNCER_AUTOSHEET=menubar` shows the panel in a plain window.
+
 
 A visual pass modelled on what current Mac utilities do (System Settings, Carbon Copy Cloner, Arq,
 CleanShot) and Apple's Human Interface Guidelines. Nothing about what the app does, its settings or
