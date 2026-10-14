@@ -22,6 +22,9 @@ its records changed.
   instead of separate floating cards; recent runs are a grouped list with a status dot, a hover
   highlight and a chevron.
 - Sidebar rows: the folder symbol in the accent colour, a touch more height.
+- The accent and the good / attention / problem colours have a brighter twin in dark mode (as Apple's
+  blue goes from #007AFF to #0A84FF), so links, icon tiles and status text read on a dark ground. Your
+  chosen colour is unchanged in the light look.
 - Empty states use the same icon tiles. Check marks are the filled circle symbols.
 - Run and restore screens use the shared cards and stat tiles.
 

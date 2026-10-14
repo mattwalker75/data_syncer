@@ -15,6 +15,22 @@ struct ThemeColor: Codable, Hashable {
         func q(_ v: CGFloat) -> Double { (Double(v) * 255).rounded() / 255 }
         r = q(ns.redComponent); g = q(ns.greenComponent); b = q(ns.blueComponent)
     }
+    /// The colour as the windows use it: as chosen in the light look, and a brighter twin in the dark look — a deep
+    /// blue reads on white but sinks into a dark ground. Apple does the same (its blue goes from #007AFF to #0A84FF).
+    var dynamic: Color {
+        let base = NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? ThemeColor.lifted(base) : base
+        })
+    }
+    /// A version of `c` for dark backgrounds: brighter, a little less saturated.
+    static func lifted(_ c: NSColor) -> NSColor {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 1
+        (c.usingColorSpace(.sRGB) ?? c).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        if s < 0.2 { return NSColor(hue: h, saturation: s, brightness: max(b, 0.72), alpha: 1) }   // greys just come up
+        return NSColor(hue: h, saturation: min(s, 0.78), brightness: max(b, 0.96), alpha: 1)
+    }
+
     static func == (a: ThemeColor, b: ThemeColor) -> Bool { abs(a.r - b.r) < 1 / 512 && abs(a.g - b.g) < 1 / 512 && abs(a.b - b.b) < 1 / 512 }
     func hash(into h: inout Hasher) { h.combine(Int(r * 255)); h.combine(Int(g * 255)); h.combine(Int(b * 255)) }
     static let blue = ThemeColor(0.04, 0.37, 0.84)
@@ -75,10 +91,11 @@ enum Theme {
     /// Applies the settings: the chosen theme, or just the accent.
     @MainActor static func apply(_ s: AppSettings) {
         let t = s.activeTheme
-        accent = (t?.accent ?? s.accent).color
-        good = (t?.good ?? CustomTheme(name: "").good).color
-        attention = (t?.attention ?? CustomTheme(name: "").attention).color
-        problem = (t?.problem ?? CustomTheme(name: "").problem).color
+        // dynamic: the chosen colour in the light look, a brighter twin in the dark look (see ThemeColor.dynamic)
+        accent = (t?.accent ?? s.accent).dynamic
+        good = (t?.good ?? CustomTheme(name: "").good).dynamic
+        attention = (t?.attention ?? CustomTheme(name: "").attention).dynamic
+        problem = (t?.problem ?? CustomTheme(name: "").problem).dynamic
         sidebarTint = t?.sidebarTint?.color
         cardTint = t?.cardTint?.color
     }
