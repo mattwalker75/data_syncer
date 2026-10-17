@@ -33,6 +33,13 @@ struct MainWindow: View {
         }
         // the sync preview belongs to the window, not the run screen: it must appear whichever screen is showing
         .sheet(item: $model.preview) { SyncPreviewSheet(request: $0) }
+        // "Delete the job?" — asked from the sidebar's Delete… or the job page's Delete button, the same way
+        .confirmationDialog("Delete the job “\(model.jobToDelete?.name ?? "")”?", isPresented: Binding(get: { model.jobToDelete != nil }, set: { if !$0 { model.jobToDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete job") { if let j = model.jobToDelete { model.delete(j) }; model.jobToDelete = nil }
+            Button("Cancel", role: .cancel) { model.jobToDelete = nil }.keyboardShortcut(.defaultAction)
+        } message: {
+            Text("Only the job is removed from Data Syncer. Nothing at its source or destinations is touched; the backups stay where they are.")
+        }
         .alert(item: $model.notice) { n in
             Alert(title: Text(n.title), message: Text(n.message), dismissButton: .default(Text("OK")))
         }
@@ -87,12 +94,16 @@ struct MainWindow: View {
     }
 }
 
-/// Check destinations · Restore… · Run… — real buttons on the job's page (in the toolbar macOS draws them grey).
+/// Delete… · Check destinations · Restore… · Run… — real buttons on the job's page (in the toolbar macOS draws them grey).
 struct JobActions: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         HStack(spacing: 10) {
+            // the same question as the sidebar's Delete… (Matt, Oct 16 2026)
+            Button { if let j = model.selectedJob { model.jobToDelete = j } } label: { Label("Delete…", systemImage: "trash") }
+                .disabled(model.selectedJob.map { model.isRunning($0) } ?? true)
+                .help(model.selectedJob.map { model.isRunning($0) } == true ? "This job is running — wait for it to finish, or cancel it, before deleting it" : "Remove this job from Data Syncer (its backups and folders are not touched)")
             Button { model.checkDestinations() } label: { Label("Check destinations", systemImage: "checkmark.circle") }
                 .help("See that every destination is reachable and writable, without copying anything")
             Button { model.askToRestore() } label: { Label("Restore…", systemImage: "arrow.counterclockwise") }
@@ -112,7 +123,6 @@ struct JobActions: View {
 
 struct Sidebar: View {
     @EnvironmentObject var model: AppModel
-    @State private var jobToDelete: Job?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -126,7 +136,7 @@ struct Sidebar: View {
                                 Button("Duplicate") { model.duplicate(job) }
                                 Button("Run…") { model.selectedJobId = job.id; model.askToRun() }.disabled(model.isRunning)
                                 Divider()
-                                Button("Delete…", role: .destructive) { jobToDelete = job }.disabled(model.isRunning(job))
+                                Button("Delete…", role: .destructive) { model.jobToDelete = job }.disabled(model.isRunning(job))
                             }
                     }
                 }
@@ -134,7 +144,7 @@ struct Sidebar: View {
             .listStyle(.sidebar)
             .scrollContentBackground(Theme.sidebarTint == nil ? .automatic : .hidden)
             .background(Theme.sidebarTint?.opacity(0.25) ?? Color.clear)
-            .onDeleteCommand { if let j = model.selectedJob, !model.isRunning(j) { jobToDelete = j } }
+            .onDeleteCommand { if let j = model.selectedJob, !model.isRunning(j) { model.jobToDelete = j } }
             Divider()
             HStack {
                 Button { model.newJob() } label: { Label("New job", systemImage: "plus") }
@@ -146,12 +156,6 @@ struct Sidebar: View {
                     .accessibilityLabel("Settings")
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
-        }
-        .confirmationDialog("Delete the job “\(jobToDelete?.name ?? "")”?", isPresented: Binding(get: { jobToDelete != nil }, set: { if !$0 { jobToDelete = nil } }), titleVisibility: .visible) {
-            Button("Delete job") { if let j = jobToDelete { model.delete(j) }; jobToDelete = nil }
-            Button("Cancel", role: .cancel) { jobToDelete = nil }.keyboardShortcut(.defaultAction)
-        } message: {
-            Text("Only the job is removed from Data Syncer. Nothing at its source or destinations is touched; the backups stay where they are.")
         }
     }
 }

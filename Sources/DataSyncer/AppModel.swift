@@ -46,6 +46,8 @@ final class AppModel: ObservableObject {
     @Published var history: [RunReport] = []
     @Published var screen: Screen = .jobs
     @Published var sheet: MainSheet?
+    /// a job waiting for "Delete the job?" to be answered (the sidebar's Delete… and the job page's Delete button)
+    @Published var jobToDelete: Job?
     @Published var notice: Notice?
     @Published var settings = AppSettings.load() { didSet { settings.save(); Theme.apply(settings) } }
     /// which Settings tab to show when the window opens next

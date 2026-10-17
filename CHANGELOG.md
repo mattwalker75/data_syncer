@@ -4,6 +4,11 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 
 ## [Unreleased]
 
+### Added
+- 2026-10-16: **Delete… on the job's page**, beside Check destinations, Restore… and Run… (Matt's ask). It asks the
+  same question as the sidebar's right-click Delete… (one dialog for both now): only the job is removed — its
+  source, destinations and backups are not touched. Unavailable while that job is running.
+
 ### Changed
 - 2026-10-16: **INSTALL_APP.sh moves the app** out of build/ into /Applications by default (Matt's choice, as
   in App Starter); `-p` / `--copy` copies it instead, leaving build/Data Syncer.app in place (the old
