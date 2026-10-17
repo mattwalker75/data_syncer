@@ -159,8 +159,10 @@ destinations — a Sync destination is a plain copy you can open in Finder.
    incremental, the chain's full backup and then each incremental up to and including the point —
    and lists any files the backups never managed to copy. If a link in the chain is gone, it says
    which, and Restore stays off.
-3. **Restore into** — a folder on this Mac; an empty one is best (**Choose…** can make one).
-   Existing files with the same names are replaced; nothing else there is touched. Restoring into
+3. **Restore into** — an existing folder on this Mac that is **empty** (hidden dot files such as
+   .DS_Store don't count); **Choose…** can make a new one, and fills the box with the folder you pick
+   (a folder clicked in the panel's left column counts too). While the folder isn't there, isn't a
+   folder or holds anything, **Restore** stays off and the line beside it says why. Restoring into
    the job's own source, or into the backup destination itself, is flagged in orange first.
 4. **Remove files the backups recorded as deleted** — on, the result matches the source as it was at
    the restore point; off, those files are left for you to look at.

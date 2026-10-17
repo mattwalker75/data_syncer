@@ -41,7 +41,7 @@ struct RestoreSheet: View {
                 backups
                 options
                 HStack {
-                    Text(verdict).font(DS.body).foregroundStyle(.secondary).lineLimit(2)
+                    Text(verdict).font(DS.body).foregroundStyle(targetURL.flatMap { RestoreEngine.targetProblem($0) } != nil ? Theme.attention : .secondary).lineLimit(3)
                     Spacer()
                     Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                     Button("Restore") { start() }.keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(!ready || deleting)
@@ -50,7 +50,11 @@ struct RestoreSheet: View {
         }
         .padding(20)
         .frame(width: 760, height: candidates.isEmpty ? 200 : 640)
-        .onAppear { if destinationId == nil { destinationId = candidates.first?.id } }
+        .onAppear {
+            if destinationId == nil { destinationId = candidates.first?.id }
+            // development only: DATASYNCER_RESTORE_TARGET=<folder> fills in "Restore into" (screenshots)
+            if let t = ProcessInfo.processInfo.environment["DATASYNCER_RESTORE_TARGET"], targetPath.isEmpty { targetPath = t }
+        }
         // one load per chosen destination, cancelled when the choice changes or the sheet closes
         .task(id: destinationId) { await load() }
         .onDisappear { if !started, let s = storage { Task { await s.close() } } }
@@ -135,7 +139,7 @@ struct RestoreSheet: View {
                 Text("Restore into").frame(width: 90, alignment: .leading)
                 PlainTextField("an empty folder on this Mac", text: $targetPath, monospaced: true, label: "Restore into")
                 Button("Choose…") {
-                    if let url = FolderPicker.choose(title: "Choose where to restore", message: "The folder the backup is put into. An empty folder is best (you can make one here); existing files with the same names are replaced.", start: targetPath.isEmpty ? nil : targetURL, canCreate: true) { targetPath = url.path }
+                    if let url = FolderPicker.choose(title: "Choose where to restore", message: "The folder the backup is put into. It must be empty (hidden files like .DS_Store are fine) — New Folder makes one.", start: targetPath.isEmpty ? nil : targetURL, canCreate: true) { targetPath = url.path }
                 }
             }
             Toggle("Remove files the backups recorded as deleted (so the result matches the source as it was then)", isOn: $removeDeleted)
@@ -179,8 +183,8 @@ struct RestoreSheet: View {
 
     private var ready: Bool {
         guard case .success = plan, let t = targetURL, !model.isRunning, storage != nil else { return false }
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: t.path, isDirectory: &isDir) && isDir.boolValue
+        // an existing, empty folder (dot files allowed) — the same rule the restore itself enforces
+        return RestoreEngine.targetProblem(t) == nil
     }
 
     private var verdict: String {
@@ -188,11 +192,7 @@ struct RestoreSheet: View {
         if point == nil { return "Choose a backup to restore." }
         if case .failure = plan { return "That backup can't be restored." }
         guard let t = targetURL else { return "Choose a folder to restore into." }
-        var isDir: ObjCBool = false
-        if !FileManager.default.fileExists(atPath: t.path, isDirectory: &isDir) || !isDir.boolValue { return "That folder isn't there — make it first (Choose… can make one)." }
-        if let n = try? FileManager.default.contentsOfDirectory(atPath: t.path).filter({ $0 != ".DS_Store" }).count, n > 0 {
-            return "That folder already holds \(n) item\(n == 1 ? "" : "s"); files with the same names will be replaced."
-        }
+        if let problem = RestoreEngine.targetProblem(t) { return problem }
         return "Ready."
     }
 

@@ -80,16 +80,33 @@ public enum RestoreEngine {
         return RestorePlan(chain: chain.map(\.folder), fileCount: files, bytes: bytes, deletions: deletions, missing: missing.sorted())
     }
 
-    /// Restore into `target` (an existing local folder). Cancelling the Task stops it where it is.
+    /// What is wrong with `target` as a folder to restore into (nil = fine). Matt's rule (Oct 16 2026): it must be an
+    /// existing folder and EMPTY — only dot files (a .DS_Store Finder leaves, say) are allowed in it.
+    public static func targetProblem(_ target: URL) -> String? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir) else {
+            return "That folder isn't there — make it first (Choose… can make one)."
+        }
+        guard isDir.boolValue else { return "That is a file, not a folder. Choose a folder to restore into." }
+        guard let items = try? FileManager.default.contentsOfDirectory(atPath: target.path) else {
+            return "That folder can't be read. Choose another one."
+        }
+        let visible = items.filter { !$0.hasPrefix(".") }.sorted()
+        guard visible.isEmpty else {
+            let shown = visible.prefix(3).joined(separator: ", ") + (visible.count > 3 ? "…" : "")
+            return "That folder isn't empty (\(visible.count) item\(visible.count == 1 ? "" : "s"): \(shown)). Restore into an empty folder — Choose… can make a new one. (Hidden dot files such as .DS_Store don't count.)"
+        }
+        return nil
+    }
+
+    /// Restore into `target` (an existing, empty local folder). Cancelling the Task stops it where it is.
     public static func restore(from storage: Storage, catalog: BackupCatalog, point: String, to target: URL,
                                removeDeleted: Bool, onEvent: @escaping @Sendable (RestoreEvent) -> Void) async -> RestoreResult {
         var result = RestoreResult(status: .finished, startedAt: Date(), finishedAt: Date())
         let fm = FileManager.default
         do {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: target.path, isDirectory: &isDir), isDir.boolValue else {
-                throw DSError("The folder to restore into, \(target.path), isn't there. Make it first (an empty folder is best).")
-            }
+            // checked here too, not only in the window: nothing may be restored over files that are already there
+            if let problem = targetProblem(target) { throw DSError(problem) }
             let plan = try plan(catalog, point: point)
             onEvent(.planned(plan))
             if let free = try? target.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {

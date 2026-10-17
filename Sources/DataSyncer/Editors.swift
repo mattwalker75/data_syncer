@@ -7,6 +7,9 @@ enum FolderPicker {
     /// The standard Mac "choose a folder" panel. nil when cancelled.
     @MainActor
     static func choose(title: String, message: String, start: URL? = nil, canCreate: Bool = false) -> URL? {
+        // finish any typing first: a text field still being edited ignores a value set from outside, so the chosen
+        // folder would not show in it (Matt, Oct 16 2026: "Choose… should fill in the Restore into field")
+        NSApp.keyWindow?.makeFirstResponder(nil)
         let p = NSOpenPanel()
         p.title = title
         p.message = message
@@ -16,7 +19,9 @@ enum FolderPicker {
         p.canCreateDirectories = canCreate   // destinations must already exist (rule 6); a restore target may be made here
         p.allowsMultipleSelection = false
         if let start { p.directoryURL = start }
-        return p.runModal() == .OK ? p.url : nil
+        guard p.runModal() == .OK else { return nil }
+        // a folder picked in the panel's left column (Desktop, a drive…) with nothing selected inside it: that folder
+        return p.url ?? p.directoryURL
     }
 
     /// The drives under /Volumes (other than the startup disk), as a person sees them in Finder.

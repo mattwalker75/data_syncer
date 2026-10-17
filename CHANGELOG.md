@@ -4,6 +4,15 @@ All notable changes to Data Syncer (Keep a Changelog style; dates are when the c
 
 ## [Unreleased]
 
+### Changed
+- 2026-10-16: **Restore only into an empty folder** (Matt's rule): "Restore into" must be an existing folder with
+  nothing in it but hidden dot files (a .DS_Store Finder leaves is fine). Otherwise Restore stays off and the
+  reason shows in orange (which items are there); the restore itself refuses too, so nothing is ever restored over
+  files already there. Before, a folder with files only got a warning that same-named files would be replaced.
+- 2026-10-16: **Choose… fills in the folder you pick**, also while the box still had the cursor in it (a field
+  being edited ignored the change) and when the folder was clicked in the panel's left column with nothing
+  selected inside it. Applies to every Choose… in the app.
+
 ### Added
 - 2026-10-16: **Delete… on the job's page**, beside Check destinations, Restore… and Run… (Matt's ask). It asks the
   same question as the sidebar's right-click Delete… (one dialog for both now): only the job is removed — its
