@@ -21,7 +21,7 @@ The person using it is not a developer — every message is a plain sentence.
   - `Cloud/` — `HTTP`, `OAuth` (PKCE + loopback listener on port 45873), `CloudAccounts` (accounts.json + Keychain `cloud:<id>`), one `Storage` per service: `S3Storage`, `GoogleDriveStorage`, `DropboxStorage`, `OneDriveStorage`.
 - `Sources/DataSyncer/` — the SwiftUI app. Thin: `AppModel` drives the core and `RunSession` shows its events; views never touch disks (`Docs/ARCHITECTURE.md` lists the files).
 - `Tests/DataSyncerCoreTests/` — XCTest against throwaway folders (`Scratch`), a fixed clock for folder names.
-- `BUILD_APP.sh` assembles the .app (+ `icon/DataSyncer.icns`; ad-hoc signed by default, `--sign` for a stable identity); `INSTALL_APP.sh` checks tools, tests, builds, copies to /Applications.
+- `BUILD_APP.sh` assembles the .app (+ `icon/DataSyncer.icns`; ad-hoc signed by default, `--sign` for a stable identity); `INSTALL_APP.sh` checks tools, tests, builds, MOVES the app to /Applications (`--copy` keeps it in build/).
 
 ## Rules that exist for a reason (Matt's decisions, Oct 2026)
 1. **One way, on demand.** The source is always local and is the truth. Nothing runs unless the user runs it; no scheduling, no watching.

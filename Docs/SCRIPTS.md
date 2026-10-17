@@ -6,13 +6,14 @@
 ./INSTALL_APP.sh [options…]
 
   (no options)    Check the tools, run the tests, build "Data Syncer.app" (BUILD_APP.sh) and
-                  copy it to /Applications (asking first).
+                  MOVE it to /Applications (asking first) — build/ is left without it.
   -t, --to DIR    Put the finished app in DIR instead of /Applications — for example
                   ./INSTALL_APP.sh --to ~/Desktop   (DIR must already exist).
   -u, --universal Build one app that runs on Apple-silicon and Intel Macs (for copying to another Mac).
   -s, --sign ID   Sign with a certificate from your Keychain, so Full Disk Access and Keychain
                   permissions survive rebuilds (below). Or set DATASYNCER_SIGN_IDENTITY.
   -k, --skip-tests  Don't run the tests first (quicker when you just pulled new code).
+  -p, --copy      Copy the app instead of moving it, so build/Data Syncer.app stays too.
   -n, --no-copy   Build only; leave the app in build/ and don't touch /Applications.
   -y, --yes       Don't ask before installing tools, installing on a failed test run, or replacing
                   an app that is already there.
@@ -24,7 +25,8 @@
 Needs macOS 14 or newer and Xcode's command-line tools; when they are missing it offers to start
 Apple's installer (`xcode-select --install`), then asks you to run it again. Test output goes to
 `build/test.log`; a red suite asks "Build and install anyway?" (`--yes` goes ahead without asking). A failed build or
-copy stops with the reason — the old app is never replaced by a broken one. Safe to run again at
+copy stops with the reason — the new app is put beside the old one first and swapped in, so the old
+app is never replaced by a broken one. Safe to run again at
 any time: it rebuilds and replaces the app.
 
 **Run it again after pulling new code.** (`BUILD_APP.sh` on its own only writes `build/`; the copy

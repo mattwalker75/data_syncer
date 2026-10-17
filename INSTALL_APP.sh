@@ -9,13 +9,14 @@
 # Usage:  ./INSTALL_APP.sh [options…]
 #
 #   (no options)    Check the tools, run the tests, build "Data Syncer.app" (BUILD_APP.sh) and
-#                   copy it to /Applications (asking first).
+#                   MOVE it to /Applications (asking first) — build/ is left without it.
 #   -t, --to DIR    Put the finished app in DIR instead of /Applications — for example
 #                   ./INSTALL_APP.sh --to ~/Desktop   (DIR must already exist).
 #   -u, --universal Build one app that runs on Apple-silicon and Intel Macs (for copying to another Mac).
 #   -s, --sign ID   Sign with a certificate from your Keychain, so Full Disk Access and Keychain
 #                   permissions survive rebuilds (see Docs/SCRIPTS.md). Or set DATASYNCER_SIGN_IDENTITY.
 #   -k, --skip-tests  Don't run the tests first (quicker when you just pulled new code).
+#   -p, --copy      Copy the app instead of moving it, so build/Data Syncer.app stays too.
 #   -n, --no-copy   Build only; leave the app in build/ and don't touch /Applications.
 #   -y, --yes       Don't ask before installing tools, installing on a failed test run, or replacing
 #                   an app that is already there.
@@ -23,7 +24,7 @@
 #   -h, --help      This help.
 #
 # Safe to run again at any time — for example after pulling new code (it rebuilds and replaces the app).
-# Then open Data Syncer from /Applications (or build/Data Syncer.app).
+# Then open Data Syncer from /Applications.
 #
 set -uo pipefail
 ORIG_PWD="$PWD"
@@ -33,13 +34,14 @@ info() { echo "${C_BLU}==>${C_RESET} $*"; }; ok() { echo "${C_GRN}OK ${C_RESET} 
 usage() { awk 'NR>=3 { if (/^#/) { sub(/^# ?/, ""); print } else { exit } }' "${BASH_SOURCE[0]}"; }
 
 MIN_MACOS=14
-COPY=1; YES=0; CHECK_ONLY=0; SKIP_TESTS=0; DEST="/Applications"; BUILD_ARGS=()
+COPY=1; KEEP_BUILD=0; YES=0; CHECK_ONLY=0; SKIP_TESTS=0; DEST="/Applications"; BUILD_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -t|--to)        [[ $# -ge 2 ]] || { err "--to needs a folder, for example --to ~/Desktop"; exit 2; }; DEST="${2/#\~/$HOME}"; shift ;;
     -u|--universal) BUILD_ARGS+=(--universal) ;;
     -s|--sign)      [[ $# -ge 2 ]] || { err "--sign needs the name of a certificate in your Keychain"; exit 2; }; BUILD_ARGS+=(--sign "$2"); shift ;;
     -k|--skip-tests) SKIP_TESTS=1 ;;
+    -p|--copy)      KEEP_BUILD=1 ;;
     -n|--no-copy)   COPY=0 ;;
     -y|--yes)       YES=1 ;;
     -c|--check)     CHECK_ONLY=1 ;;
@@ -102,15 +104,24 @@ fi
 # ---- install
 if [[ $COPY -eq 1 ]]; then
   if [[ -d "$TARGET" ]]; then
-    if confirm "Replace the Data Syncer already in $DEST?"; then
-      rm -rf "$TARGET" || { err "Could not remove the old app in $DEST (is it open, or is the folder read-only?)."; exit 1; }
+    if confirm "Replace the Data Syncer already in $DEST?"; then :
     else COPY=0; fi
-  elif ! confirm "Copy Data Syncer.app to $DEST?"; then COPY=0; fi
+  elif ! confirm "$([[ $KEEP_BUILD -eq 1 ]] && echo Copy || echo Move) Data Syncer.app to $DEST?"; then COPY=0; fi
 fi
 if [[ $COPY -eq 1 ]]; then
-  # ditto copies an app bundle exactly (Apple's recommended way)
-  ditto "build/Data Syncer.app" "$TARGET" || { err "Could not copy the app to $DEST."; exit 1; }
-  ok "Installed $TARGET"
+  # first beside the old one, then swapped in, so a failed move/copy never leaves you with no app (or half of one).
+  # By default the app is MOVED out of build/ (Matt's choice); --copy uses ditto (Apple's way to copy a bundle) and
+  # leaves build/Data Syncer.app where it is.
+  NEW="$DEST/.Data Syncer.app.new"
+  rm -rf "$NEW"
+  if [[ $KEEP_BUILD -eq 1 ]]; then
+    ditto "build/Data Syncer.app" "$NEW" || { rm -rf "$NEW"; err "Could not copy the app to $DEST (the old one is untouched)."; exit 1; }
+  else
+    mv "build/Data Syncer.app" "$NEW" || { rm -rf "$NEW"; err "Could not move the app to $DEST (the old one is untouched; the new one is still in build/)."; exit 1; }
+  fi
+  if [[ -d "$TARGET" ]]; then rm -rf "$TARGET" || { rm -rf "$NEW"; err "Could not remove the old app in $DEST (is the folder read-only?)."; exit 1; }; fi
+  mv "$NEW" "$TARGET" || { err "Could not put the new app in place in $DEST."; exit 1; }
+  ok "Installed $TARGET ($([[ $KEEP_BUILD -eq 1 ]] && echo "copied; build/Data Syncer.app stays" || echo "moved out of build/"))"
   echo; echo "Next:  open \"$TARGET\""
   [[ "$DEST" == "/Applications" ]] && echo "       (or find Data Syncer in Launchpad)"
   echo "       To use it on another Mac, copy the whole \"Data Syncer.app\" over (AirDrop, a USB drive, a share)."

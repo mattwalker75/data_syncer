@@ -2,6 +2,14 @@
 
 All notable changes to Data Syncer (Keep a Changelog style; dates are when the change was made).
 
+## [Unreleased]
+
+### Changed
+- 2026-10-16: **INSTALL_APP.sh moves the app** out of build/ into /Applications by default (Matt's choice, as
+  in App Starter); `-p` / `--copy` copies it instead, leaving build/Data Syncer.app in place (the old
+  behaviour). The new app is put beside the old one first and swapped in, so a failed move or copy never
+  leaves you without an app.
+
 ## [0.9.6] — 2026-10-14 — the menu bar item
 
 ### Added
